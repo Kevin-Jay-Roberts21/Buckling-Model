@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 #################################################
 # Defining the material parameters and geometry #
 #################################################
-R_v = 50 # void radius (um)
-R_s = 150 # subcortex radius (um)
+R_v = 50 # 1 # void radius (um)
+R_s = 150 # 190 # subcortex radius (um)
 R_c = 200 # cortex radius (um)
 
 lambda_s = 1100 # bulk modulus in subcortex region (Pa)
@@ -21,16 +21,16 @@ lambda_c = 3000 # bulk modulus in cortex region (Pa)
 mu_s = 11400 # shear modulus in subcortex region (Pa)
 mu_c = 34200 # shear modulus in cortex region (Pa)
 
-g_r_s = 1.05 # growth multiplier in the radial direction in subcortex region (#)
-g_r_c = 1.1 # growth multiplier in the radial direction in cortex region (#)
-g_theta_s = 1.05 # growth multiplier in the circumferential direction in subcortex region (#)
-g_theta_c = 3.1 # growth multiplier in the circumferential direction in cortex region (#)
+g_r_s = 1.05 # 1 # 1 # growth multiplier in the radial direction in subcortex region (#)
+g_r_c = 1.1 # 1 # 3 # growth multiplier in the radial direction in cortex region (#)
+g_theta_s = 1.05 # 1 # 1 # growth multiplier in the circumferential direction in subcortex region (#)
+g_theta_c = 1.2 # 3 # 3 # growth multiplier in the circumferential direction in cortex region (#)
 g_z = 1 # growth multiplier in the axial direction (#)
 
 C_z = 1 # principal stretch in the axial direction (#)
 P_f = 19.62 # external pressure (hydrostatic pressure) (Pa)
-P_in = 0 # pressure inward normal to R_v boundary (Pa)
-P_out = 0 # pressure inward normal to the R_c boundary (Pa)
+# P_in = 0 # pressure inward normal to R_v boundary (Pa)
+# P_out = 0 # pressure inward normal to the R_c boundary (Pa)
 
 # putting values for cortex and subcortex in a dictionary, used for different regions
 subcortex_vals = dict(lam=lambda_s, mu=mu_s, g_r=g_r_s, g_theta=g_theta_s)
@@ -39,7 +39,7 @@ cortex_vals = dict(lam=lambda_c, mu=mu_c, g_r=g_r_c, g_theta=g_theta_c)
 # For deciding where or not the inner subcortex boundary is fixed:
 # "fixed" -> fixed boundary
 # "pressure" -> pressure P_f applied normal to boundary
-INNER_BC = "fixed"
+INNER_BC = "pressure"
 
 
 #############################
@@ -138,6 +138,7 @@ def solve_subcortex(r_s):
     y_guess = np.vstack((np.linspace(R_v, r_s, R_mesh.size), np.ones_like(R_mesh)))
 
     # defining the boundary conditions for subcortex
+    # ya is the left (or inner) boundary and yb is the right (or outer) boundary
     def bc(ya, yb):
         r_a = ya[0]
         rp_a = ya[1]
@@ -148,14 +149,12 @@ def solve_subcortex(r_s):
         bc_int = r_b - r_s
 
         if INNER_BC == "fixed":
-            bc_inner = r_a - R_v
-
+            bc_inner = r_a - R_v # written as a residual for bvp solver
         elif INNER_BC == "pressure":
             P_RR_a, _, _ = stresses(np.array([R_v]), np.array([r_a]), np.array([rp_a]), subcortex_vals)
             P_RR_a = P_RR_a[0]
 
-            bc_inner = P_RR_a - P_in*C_z*(r_a/R_v)
-
+            bc_inner = P_RR_a - P_f*C_z*(r_a/R_v) # written as a residual for bvp solver
         else:
             raise ValueError("INNER_BC must be 'fixed' or 'pressure'.")
 
@@ -180,12 +179,12 @@ def solve_cortex(r_s):
         rp_b = yb[1]
 
         # Boundary condition at the interface
-        bc_int = r_a - r_s
+        bc_int = r_a - r_s # written as a residual for bvp solver
 
         P_RR_b, _, _ = stresses(np.array([R_c]), np.array([r_b]), np.array([rp_b]), cortex_vals)
         P_RR_b = P_RR_b[0]
 
-        bc_outer = P_RR_b + P_out*C_z*(r_b/R_c)
+        bc_outer = P_RR_b + P_f*C_z*(r_b/R_c) # written as a residual for bvp solver
 
         return np.array([bc_int, bc_outer])
 
@@ -213,60 +212,52 @@ def stress_jump(r_s):
 
     return P_RR_1[0] - P_RR_2[0]
 
-# Now find r_s such that the traction is continuous
-br_lo = max(1e-6, 0.2 * R_s)
-br_hi = 2.0 * R_s
+#####################################################################
+# Find r_s s.t. P_RR^-(R_s) = P_RR^+(R_s) using root finding method #
+#####################################################################
+def find_interface_displacement(R_s, r_guess_lo=None,
+    r_guess_hi=None,
+    max_expand=12,
+    tol=1e-6):
 
-# Expand bracket until sign change (simple robust bracketing)
-f_lo = stress_jump(br_lo)
-f_hi = stress_jump(br_hi)
+    # default bracketing guesses
+    if r_guess_lo is None:
+        r_guess_lo = 0.1*R_s
+    if r_guess_hi is None:
+        r_guess_hi = 2*R_s
 
-tries = 0
-while f_lo * f_hi > 0 and tries < 12:
-    br_lo *= 0.7
-    br_hi *= 1.3
-    f_lo = stress_jump(br_lo)
-    f_hi = stress_jump(br_hi)
-    tries += 1
+    f_lo = stress_jump(r_guess_lo)
+    f_hi = stress_jump(r_guess_hi)
 
-if f_lo * f_hi > 0:
-    raise RuntimeError(
-        "Could not bracket a root for r_s. Try different initial ranges or milder parameters."
-    )
+    tries = 0
+    while f_lo*f_hi > 0 and tries < max_expand:
+        r_guess_lo *= 0.7 # arbitrarily chosen to shrink low guess
+        r_guess_hi *= 1.3 # arbitrarily chosen to increase high guess
+        f_lo = stress_jump(r_guess_lo)
+        f_hi = stress_jump(r_guess_hi)
+        tries += 1
 
-root = root_scalar(stress_jump, bracket=(br_lo, br_hi), method="brentq", xtol=1e-6)
-r_s_star = root.root
-print("Interface displacement r(R_s) =", r_s_star)
+    if f_lo*f_hi>0:
+        raise RuntimeError("Could not bracket interface displacement r_s. System may be unstable or parameters too extreme.")
+
+    root = root_scalar(stress_jump, bracket=(r_guess_lo, r_guess_hi), method='brentq', xtol=tol)
+
+    if not root.converged:
+        raise RuntimeError("Root-finding for interface displacement failed.")
+
+    # print(f"Bracketed interface displacement r(R_s) = {root.root:.6f}")
+    # print(f"Final stress jump = {stress_jump(root.root):.3e}")
+
+    return root.root
+
+r_s_star = find_interface_displacement(R_s)
 
 # Solve one last time with the matched interface displacement
 cortex_solution = solve_cortex(r_s_star)
 subcortex_solution = solve_subcortex(r_s_star)
 
-print("Subcortex converged:", cortex_solution.success, cortex_solution.message)
-print("Cortex converged:   ", subcortex_solution.success, subcortex_solution.message)
-
-# -----------------------------
-# Stitch solutions for plotting
-# -----------------------------
-R1 = np.linspace(R_v, R_s, 300)
-R2 = np.linspace(R_s, R_c, 300)
-
-# These are 1D arrays already (length 300)
-r1, rp1 = cortex_solution.sol(R1)
-r2, rp2 = subcortex_solution.sol(R2)
-
-# Stitch (skip the duplicate interface point in region 2)
-R_all  = np.concatenate([R1, R2[1:]])
-r_all  = np.concatenate([r1, r2[1:]])
-rp_all = np.concatenate([rp1, rp2[1:]])
-
-# Stresses (pass 1D arrays)
-P_RR_1, P_TT_1, _ = stresses(R1, r1, rp1, subcortex_vals)
-P_RR_2, P_TT_2, _ = stresses(R2, r2, rp2, cortex_vals)
-
-P_RR_all = np.concatenate([P_RR_1, P_RR_2[1:]])
-P_TT_all = np.concatenate([P_TT_1, P_TT_2[1:]])
-
+print("Subcortex converged:", subcortex_solution.success, subcortex_solution.message)
+print("Cortex converged:   ", cortex_solution.success, cortex_solution.message)
 
 #######################################################
 # Checking for Instability: if lam_r/lam_theta >= 2.4 #
@@ -291,76 +282,102 @@ def instability_check(cortex_solution, subcortex_solution):
 
     ratio = lam_r / lam_theta
 
+    print(f"Elastic principle stretch in circumferential direction: {lam_theta}")
+    print(f"Elastic principle stretch in radial direction: {lam_r}")
     print(f"Instability ratio: {ratio}")
 
 instability_check(cortex_solution, subcortex_solution)
 
 
+############
+# PLOTTING #
+############
 
-# PLOTTING
+#################################
+# Stitch solutions for plotting #
+#################################
+R1 = np.linspace(R_v, R_s, 300)
+R2 = np.linspace(R_s, R_c, 300)
+
+# These are 1D arrays already (length 300)
+r1, rp1 = subcortex_solution.sol(R1)
+r2, rp2 = cortex_solution.sol(R2)
+
+# Stitch (skip the duplicate interface point in region 2)
+R_all  = np.concatenate([R1, R2[1:]])
+r_all  = np.concatenate([r1, r2[1:]])
+rp_all = np.concatenate([rp1, rp2[1:]])
+
+# Stresses (pass 1D arrays)
+P_RR_1, P_TT_1, _ = stresses(R1, r1, rp1, subcortex_vals)
+P_RR_2, P_TT_2, _ = stresses(R2, r2, rp2, cortex_vals)
+
+P_RR_all = np.concatenate([P_RR_1, P_RR_2[1:]])
+P_TT_all = np.concatenate([P_TT_1, P_TT_2[1:]])
 
 # -----------------------------
 # Plots (same style as your 1-region)
 # -----------------------------
 def plot_reference_vs_deformed_boundaries_two_region(
     r_in, r_s, r_out,
-    title="Reference vs deformed boundaries (two-region)"
+    title=""
 ):
     theta = np.linspace(0, 2*np.pi, 600)
 
-    # --- Reference circles ---
-    x_in_ref  = R_v * np.cos(theta); y_in_ref  = R_v * np.sin(theta)
-    x_s_ref   = R_s * np.cos(theta); y_s_ref   = R_s * np.sin(theta)
-    x_out_ref = R_c * np.cos(theta); y_out_ref = R_c * np.sin(theta)
-
-    # --- Deformed circles ---
-    x_in_def  = r_in  * np.cos(theta); y_in_def  = r_in  * np.sin(theta)
-    x_s_def   = r_s   * np.cos(theta); y_s_def   = r_s   * np.sin(theta)
-    x_out_def = r_out * np.cos(theta); y_out_def = r_out * np.sin(theta)
+    # Reference radii
+    radii_ref = [R_v, R_s, R_c]
+    radii_def = [r_in, r_s, r_out]
+    colors = ["purple", "blue", "green"]
 
     plt.figure(figsize=(6, 6))
 
-    # Reference (dashed)
-    plt.plot(x_in_ref,  y_in_ref,  "--", color="blue",  alpha=0.5, label="Inner ref (R=Rv)")
-    plt.plot(x_s_ref,   y_s_ref,   "--", color="green", alpha=0.5, label="Interface ref (R=Rs)")
-    plt.plot(x_out_ref, y_out_ref, "--", color="red",   alpha=0.5, label="Outer ref (R=Rc)")
+    for R, r, c in zip(radii_ref, radii_def, colors):
+        # reference (dashed)
+        plt.plot(
+            R*np.cos(theta), R*np.sin(theta),
+            "--", color=c, alpha=0.5
+        )
+        # deformed (solid)
+        plt.plot(
+            r*np.cos(theta), r*np.sin(theta),
+            "-", color=c, linewidth=2
+        )
 
-    # Deformed (solid)
-    plt.plot(x_in_def,  y_in_def,  "-", color="blue",  linewidth=2, label="Inner deformed r(Rv)")
-    plt.plot(x_s_def,   y_s_def,   "-", color="green", linewidth=2, label="Interface deformed r(Rs)")
-    plt.plot(x_out_def, y_out_def, "-", color="red",   linewidth=2, label="Outer deformed r(Rc)")
+    # dummy lines for legend
+    # plt.plot([], [], "--", color="black", label="Reference")
+    # plt.plot([], [], "-",  color="black", label="Deformed")
 
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.xlabel("x")
-    plt.ylabel("y")
+    plt.xlabel(r"$x\;(\mu m)$")
+    plt.ylabel(r"$y\;(\mu m)$")
     plt.title(title)
-    plt.legend()
+    plt.legend(frameon=False)
     plt.grid(True)
     plt.show()
 
 # inner, interface and outer deformed radii
-r_in  = cortex_solution.sol(np.array([R_v]))[0][0]
+r_in  = subcortex_solution.sol(np.array([R_v]))[0][0]
 r_s   = r_s_star
-r_out = subcortex_solution.sol(np.array([R_c]))[0][0]
+r_out = cortex_solution.sol(np.array([R_c]))[0][0]
 
 plot_reference_vs_deformed_boundaries_two_region(r_in, r_s, r_out)
 
 # r(R)
 plt.figure()
 plt.plot(R_all, r_all)
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label="Interface R_s")
-plt.xlabel("R"); plt.ylabel("r(R)")
-plt.title("Deformed radius mapping (two-region)")
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"r(R) $(\mu m)$")
+plt.title("Deformed radius mapping")
 plt.grid(True); plt.legend()
 plt.show()
 
 # stresses
 plt.figure()
-plt.plot(R_all, P_RR_all, label="P_RR")
-plt.plot(R_all, P_TT_all, label="P_ThetaTheta")
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label="Interface R_s")
-plt.xlabel("R"); plt.ylabel("Piola stress")
-plt.title("Stress components (two-region)")
+plt.plot(R_all, P_RR_all, label=r"$P_{RR}$")
+plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
+plt.title("Stress components")
 plt.grid(True); plt.legend()
 plt.show()
 
@@ -369,8 +386,8 @@ u_all = r_all - R_all
 plt.figure()
 plt.plot(R_all, u_all, linewidth=2)
 plt.axhline(0, color="k", linestyle="--", linewidth=1)
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label="Interface R_s")
-plt.xlabel("R"); plt.ylabel("u(R)=r(R)-R")
-plt.title("Radial displacement (two-region)")
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"$u(R)=r(R)-R$ $(\mu m)$")
+plt.title("Radial displacement")
 plt.grid(True); plt.legend()
 plt.show()
