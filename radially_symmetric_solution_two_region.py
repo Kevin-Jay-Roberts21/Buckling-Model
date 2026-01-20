@@ -348,10 +348,10 @@ def plot_reference_vs_deformed_boundaries_two_region(
     # plt.plot([], [], "-",  color="black", label="Deformed")
 
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.xlabel(r"$x\;(\mu m)$")
-    plt.ylabel(r"$y\;(\mu m)$")
+    plt.xlabel(r"$x \ (\mu m)$")
+    plt.ylabel(r"$y \ (\mu m)$")
     plt.title(title)
-    plt.legend(frameon=False)
+    # plt.legend(frameon=False)
     plt.grid(True)
     plt.show()
 
