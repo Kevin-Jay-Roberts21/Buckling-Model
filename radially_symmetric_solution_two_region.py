@@ -39,7 +39,7 @@ cortex_vals = dict(lam=lambda_c, mu=mu_c, g_r=g_r_c, g_theta=g_theta_c)
 # For deciding where or not the inner subcortex boundary is fixed:
 # "fixed" -> fixed boundary
 # "pressure" -> pressure P_f applied normal to boundary
-INNER_BC = "pressure"
+INNER_BC = ("fixed")
 
 
 #############################
@@ -154,7 +154,7 @@ def solve_subcortex(r_s):
             P_RR_a, _, _ = stresses(np.array([R_v]), np.array([r_a]), np.array([rp_a]), subcortex_vals)
             P_RR_a = P_RR_a[0]
 
-            bc_inner = P_RR_a - P_f*C_z*(r_a/R_v) # written as a residual for bvp solver
+            bc_inner = P_RR_a + P_f*C_z*(r_a/R_v) # written as a residual for bvp solver
         else:
             raise ValueError("INNER_BC must be 'fixed' or 'pressure'.")
 
@@ -288,7 +288,6 @@ def instability_check(cortex_solution, subcortex_solution):
 
 instability_check(cortex_solution, subcortex_solution)
 
-
 ############
 # PLOTTING #
 ############
@@ -378,6 +377,8 @@ plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
 plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
 plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
 plt.title("Stress components")
+plt.xlim(50, 200)        # example: R from 0 to 500 µm
+plt.ylim(-6000, 4500)   # example: stress range
 plt.grid(True); plt.legend()
 plt.show()
 
