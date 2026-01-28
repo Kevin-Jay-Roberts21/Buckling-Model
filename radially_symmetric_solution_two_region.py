@@ -305,7 +305,7 @@ r2, rp2 = cortex_solution.sol(R2)
 # Stitch (skip the duplicate interface point in region 2)
 R_all  = np.concatenate([R1, R2[1:]])
 r_all  = np.concatenate([r1, r2[1:]])
-rp_all = np.concatenate([rp1, rp2[1:]])
+rp_all = np.conlscatenate([rp1, rp2[1:]])
 
 # Stresses (pass 1D arrays)
 P_RR_1, P_TT_1, _ = stresses(R1, r1, rp1, subcortex_vals)
