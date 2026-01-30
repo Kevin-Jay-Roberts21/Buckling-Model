@@ -259,6 +259,32 @@ subcortex_solution = solve_subcortex(r_s_star)
 print("Subcortex converged:", subcortex_solution.success, subcortex_solution.message)
 print("Cortex converged:   ", cortex_solution.success, cortex_solution.message)
 
+def solve_base_state():
+    """
+    Solve the matched two-region base state using the current parameter dictionaries:
+      subcortex_vals, cortex_vals
+    Returns: (subcortex_solution, cortex_solution, r_s_star)
+    """
+    r_s_star = find_interface_displacement(R_s)
+    cortex_solution = solve_cortex(r_s_star)
+    subcortex_solution = solve_subcortex(r_s_star)
+
+    if (not subcortex_solution.success) or (not cortex_solution.success):
+        raise RuntimeError("Base-state BVP did not converge.")
+
+    return subcortex_solution, cortex_solution, r_s_star
+
+
+if __name__ == "__main__":
+    sub_sol, cor_sol, r_s_star = solve_base_state()
+    print("Interface displacement r(R_s) =", r_s_star)
+    print("Subcortex converged:", sub_sol.success, sub_sol.message)
+    print("Cortex converged:   ", cor_sol.success, cor_sol.message)
+
+
+
+
+
 #######################################################
 # Checking for Instability: if lam_r/lam_theta >= 2.4 #
 #######################################################
