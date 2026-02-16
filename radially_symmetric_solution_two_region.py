@@ -33,8 +33,8 @@ P_f = 19.62 # external pressure (hydrostatic pressure) (Pa)
 # P_out = 0 # pressure inward normal to the R_c boundary (Pa)
 
 # putting values for cortex and subcortex in a dictionary, used for different regions
-subcortex_vals = dict(lam=lambda_s, mu=mu_s, g_r=g_r_s, g_theta=g_theta_s)
-cortex_vals = dict(lam=lambda_c, mu=mu_c, g_r=g_r_c, g_theta=g_theta_c)
+subcortex_vals = dict(lambd=lambda_s, mu=mu_s, g_r=g_r_s, g_theta=g_theta_s)
+cortex_vals = dict(lambd=lambda_c, mu=mu_c, g_r=g_r_c, g_theta=g_theta_c)
 
 # For deciding where or not the inner subcortex boundary is fixed:
 # "fixed" -> fixed boundary
@@ -48,7 +48,7 @@ INNER_BC = ("fixed")
 def stresses(R, r, r_prime, params):
 
     # getting the parameters
-    lam = params['lam']
+    lambd = params['lambd']
     mu = params['mu']
     g_r = params['g_r']
     g_theta = params['g_theta']
@@ -60,7 +60,7 @@ def stresses(R, r, r_prime, params):
 
     # computing the ln term and using it in the eta term
     ln = np.log((r_prime*(r/R)*C_z) / (g_r*g_theta*g_z))
-    eta = lam * ln - mu
+    eta = lambd * ln - mu
 
     P_RR = mu*(r_prime/(g_r**2)) + eta/r_prime
     P_ThetaTheta = mu*((r/R)/(g_theta**2)) + eta*(R/r)
@@ -74,7 +74,7 @@ def stresses(R, r, r_prime, params):
 def partial_derivs(R, r, r_prime, eta, params):
 
     # getting the params
-    lam = params['lam']
+    lambd = params['lambd']
     mu = params['mu']
     g_r = params['g_r']
 
@@ -84,13 +84,13 @@ def partial_derivs(R, r, r_prime, eta, params):
     r_prime = np.maximum(r_prime, 1e-30)
 
     # ∂P_RR/∂r'
-    dP_dr_prime = (mu/(g_r**2)) + (lam-eta)/(r_prime**2)
+    dP_dr_prime = (mu/(g_r**2)) + (lambd-eta)/(r_prime**2)
 
     # ∂P_RR/∂r
-    dP_dr = lam/(r_prime*r)
+    dP_dr = lambd/(r_prime*r)
 
     # ∂P_RR/∂R
-    dP_dR = -lam/(r_prime*R)
+    dP_dR = -lambd/(r_prime*R)
 
     return dP_dR, dP_dr, dP_dr_prime
 
@@ -331,7 +331,7 @@ r2, rp2 = cortex_solution.sol(R2)
 # Stitch (skip the duplicate interface point in region 2)
 R_all  = np.concatenate([R1, R2[1:]])
 r_all  = np.concatenate([r1, r2[1:]])
-rp_all = np.conlscatenate([rp1, rp2[1:]])
+rp_all = np.concatenate([rp1, rp2[1:]])
 
 # Stresses (pass 1D arrays)
 P_RR_1, P_TT_1, _ = stresses(R1, r1, rp1, subcortex_vals)
