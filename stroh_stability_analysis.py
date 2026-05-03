@@ -232,7 +232,6 @@ def pressure_bc_operator(BR, F_0, Fg, lambd, mu, m, k, P_f, Nsign):
     Qmat, Rmat = stroh_QR_matrices(BR, F_0, Fg, lambd, mu, m, k)
     Qinv = inv(Qmat)
 
-    # Helper: given (u,t), compute rhs traction vector (3,) using your pressure RHS
     def rhs_from_ut(u, t):
         # u' = Q^{-1}(t - R u)
         up = Qinv @ (t - Rmat @ u)
@@ -244,25 +243,44 @@ def pressure_bc_operator(BR, F_0, Fg, lambd, mu, m, k, P_f, Nsign):
     Mu = np.zeros((3, 3), dtype=complex)
     Mt = np.zeros((3, 3), dtype=complex)
 
-    # rhs response to unit u (with t=0)
     t0 = np.zeros(3, dtype=complex)
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
         Mu[:, j] = rhs_from_ut(ej, t0)
 
-    # rhs response to unit t (with u=0)
     u0 = np.zeros(3, dtype=complex)
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
         Mt[:, j] = rhs_from_ut(u0, ej)
 
-    # Residual is: t - rhs = t - (Mu u + Mt t) = (-Mu)u + (I - Mt)t
+    # Residual: (deltaP*N) - rhs = (Nsign*t) - (Mu u + Mt t)
+    # => (-Mu) u + (Nsign*I - Mt) t
     Bu = -Mu
-    Bt = np.eye(3, dtype=complex) - Mt
+    Bt = (Nsign * np.eye(3, dtype=complex)) - Mt
     return Bu, Bt
 
+def inner_bc_matrices(base_state, m, k):
+
+    R = max(float(base.R_v), 1e-12)
+
+    r, r_prime, _region = base_state.eval(R)
+    params = base.subcortex_vals
+    lambd = params["lambd"]
+    mu = params["mu"]
+    g_r = params["g_r"]
+    g_theta = params["g_theta"]
+    g_z = base.g_z
+
+    F_0 = np.diag([r_prime, r / R, base.C_z]).astype(complex)
+    Fg  = np.diag([g_r, g_theta, g_z]).astype(complex)
+
+    Bu, Bt = pressure_bc_operator(
+        BR=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
+        m=m, k=k, P_f=base.P_f, Nsign=-1.0  # N_s = (-1,0,0)
+    )
+    return Bu, Bt
 
 ################################
 # Outer BC residual at R = R_c #
@@ -322,28 +340,43 @@ def integrate_eta(base_state, ode, eta_0, rtol=1e-6, atol=1e-9):
 # Deriving the shooting matrix and stability indicator Φ = |det(S)| #
 #####################################################################
 def shooting_matrix_S(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
-    # Building the 3x3 shooting matrix S for given g_theta_c, m, k
-    # The columns correspond to three independent inner traction initializations.
+
     base_state = solve_base_state_for_gthetac(g_theta_c)
     ode = make_eta_ode(base_state, m, k)
 
-    # inner fixed displacement condition: uhat(R_v)=0
-    u_0 = np.zeros(3, dtype=complex)
-
-    # basis tractions at inner boundary
-    E = np.eye(3, dtype=complex)
-
     S = np.zeros((3, 3), dtype=complex)
 
+    # --- choose 3 independent initial states consistent with inner BC ---
+    if base.INNER_BC == "fixed":
+        # u(R_v) = 0, choose traction basis
+        u0 = np.zeros(3, dtype=complex)
+        Tbasis = np.eye(3, dtype=complex)
+
+        initials = []
+        for j in range(3):
+            t0 = Tbasis[:, j]
+            initials.append(np.concatenate([u0, t0]).astype(complex))
+
+    elif base.INNER_BC == "pressure":
+        # Bu u + Bt t = 0 at R=R_v, choose u-basis and solve for t
+        Bu, Bt = inner_bc_matrices(base_state, m, k)
+
+        Ubasis = np.eye(3, dtype=complex)
+        initials = []
+        for j in range(3):
+            u0 = Ubasis[:, j]
+            # Solve Bt t0 = -Bu u0
+            t0 = solve(Bt, -Bu @ u0)
+            initials.append(np.concatenate([u0, t0]).astype(complex))
+
+    else:
+        raise ValueError("base.INNER_BC must be 'fixed' or 'pressure'.")
+
+    # --- propagate each admissible initial state, enforce outer BC ---
     for j in range(3):
-        t_0 = E[:, j]
-        eta_0 = np.concatenate([u_0, t_0]).astype(complex)
-
-        # ---- key change: integrate in two pieces using your helper ----
-        eta_R_c = integrate_eta(base_state, ode, eta_0, rtol=rtol, atol=atol)
-
-        # apply outer BC residual at R=R_c
-        res = outer_bc_residual(base_state, m, k, eta_R_c)
+        eta_0 = initials[j]
+        eta_Rc = integrate_eta(base_state, ode, eta_0, rtol=rtol, atol=atol)
+        res = outer_bc_residual(base_state, m, k, eta_Rc)
         S[:, j] = res
 
     return S
