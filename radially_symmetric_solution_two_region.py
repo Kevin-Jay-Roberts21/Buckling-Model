@@ -1,5 +1,5 @@
 # Python Code For Radially Symmetric Numerical Solution for Buckling
-# Organoid for two regions (cortex and subcortex)
+# Organoid for two regions: cortex and subcortex
 
 # Kevin Roberts
 # January 2026
@@ -9,37 +9,36 @@ from scipy.integrate import solve_bvp
 from scipy.optimize import root_scalar
 import matplotlib.pyplot as plt
 
+
 #################################################
 # Defining the material parameters and geometry #
 #################################################
 R_v = 50 # 1 # void radius (um)
-R_s = 150 # 190 # subcortex radius (um)
+R_s = 190 # 190 # subcortex radius (um)
 R_c = 200 # cortex radius (um)
 
-lambda_s = 1100 # bulk modulus in subcortex region (Pa)
-lambda_c = 3000 # bulk modulus in cortex region (Pa)
-mu_s = 11400 # shear modulus in subcortex region (Pa)
-mu_c = 34200 # shear modulus in cortex region (Pa)
+lambda_c = 0.3 * 10**4 # bulk modulus in cortex region (Pa)
+lambda_s = 0.11 * 10**4 # bulk modulus in subcortex region (Pa)
+mu_c = 3.42 * 10**4 # shear modulus in cortex region (Pa)
+mu_s = 1.14 * 10**4 # shear modulus in subcortex region (Pa)
 
-g_r_s = 1.05 # 1 # 1 # growth multiplier in the radial direction in subcortex region (#)
-g_r_c = 1.1 # 1 # 3 # growth multiplier in the radial direction in cortex region (#)
-g_theta_s = 1.05 # 1 # 1 # growth multiplier in the circumferential direction in subcortex region (#)
-g_theta_c = 1.2 # 3 # 3 # growth multiplier in the circumferential direction in cortex region (#)
+g_r_s = 1.05 # growth multiplier in the radial direction in subcortex region (#)
+g_r_c = 1.1 # growth multiplier in the radial direction in cortex region (#)
+g_theta_s = 1.05 # growth multiplier in the circumferential direction in subcortex region (#)
+g_theta_c = 1.2 # growth multiplier in the circumferential direction in cortex region (#)
 g_z = 1 # growth multiplier in the axial direction (#)
 
 C_z = 1 # principal stretch in the axial direction (#)
 P_f = 19.62 # external pressure (hydrostatic pressure) (Pa)
-# P_in = 0 # pressure inward normal to R_v boundary (Pa)
-# P_out = 0 # pressure inward normal to the R_c boundary (Pa)
 
 # putting values for cortex and subcortex in a dictionary, used for different regions
 subcortex_vals = dict(lambd=lambda_s, mu=mu_s, g_r=g_r_s, g_theta=g_theta_s)
 cortex_vals = dict(lambd=lambda_c, mu=mu_c, g_r=g_r_c, g_theta=g_theta_c)
 
-# For deciding where or not the inner subcortex boundary is fixed:
+# For deciding if the inner subcortex boundary is fixed:
 # "fixed" -> fixed boundary
 # "pressure" -> pressure P_f applied normal to boundary
-INNER_BC = ("fixed")
+INNER_BC = "fixed"
 
 
 #############################
@@ -60,7 +59,7 @@ def stresses(R, r, r_prime, params):
 
     # computing the ln term and using it in the eta term
     ln = np.log((r_prime*(r/R)*C_z) / (g_r*g_theta*g_z))
-    eta = lambd * ln - mu
+    eta = lambd*ln - mu
 
     P_RR = mu*(r_prime/(g_r**2)) + eta/r_prime
     P_ThetaTheta = mu*((r/R)/(g_theta**2)) + eta*(R/r)
@@ -97,6 +96,11 @@ def partial_derivs(R, r, r_prime, eta, params):
 #############################################################
 # Defining the ODE function object for the solve_bvp solver #
 #############################################################
+
+# we need nested functions here because of the params that we have to pass in which are
+# different values in some regions. It would make sense to possibly configure it like:
+# ode_system(R, y, params), but the solve_bvp function does not naturally pass extra arguments
+# in this way.
 def make_ode_system(params):
     def ode_system(R, y):
 
@@ -135,7 +139,12 @@ def solve_subcortex(r_s):
     ode = make_ode_system(subcortex_vals)
 
     R_mesh = np.linspace(R_v, R_s, 200)
-    y_guess = np.vstack((np.linspace(R_v, r_s, R_mesh.size), np.ones_like(R_mesh)))
+
+    # initial guess for y0 is essentially a straight line connecting r(R_v) to r(R_s)
+    # initial guess for y1 is 1
+    y0_guess = np.linspace(R_v, r_s, R_mesh.size)
+    y1_guess = np.ones_like(R_mesh)
+    y_guess = np.vstack((y0_guess, y1_guess))
 
     # defining the boundary conditions for subcortex
     # ya is the left (or inner) boundary and yb is the right (or outer) boundary
@@ -163,14 +172,17 @@ def solve_subcortex(r_s):
     sol = solve_bvp(ode, bc, R_mesh, y_guess, max_nodes=5000, tol=1e-6)
     return sol
 
-##########################################
-# BVP solver for the subcortex given r_s #
-##########################################
+#######################################
+# BVP solver for the cortex given r_s #
+#######################################
 def solve_cortex(r_s):
     ode = make_ode_system(cortex_vals)
 
     R_mesh = np.linspace(R_s, R_c, 200)
-    y_guess = np.vstack((np.linspace(r_s, R_c, R_mesh.size), np.ones_like(R_mesh)))
+
+    y0_guess = np.linspace(r_s, R_c, R_mesh.size)
+    y1_guess = np.ones_like(R_mesh)
+    y_guess = np.vstack((y0_guess, y1_guess))
 
     def bc(ya, yb):
         r_a = ya[0]
@@ -195,94 +207,102 @@ def solve_cortex(r_s):
 # Stress jump function for root finding: P_RR^-(R_s) - P_RR^+(R_s) = 0 #
 ########################################################################
 def stress_jump(r_s):
-    sol1 = solve_subcortex(r_s)
-    sol2 = solve_cortex(r_s)
+    sol_sub = solve_subcortex(r_s)
+    sol_cor = solve_cortex(r_s)
 
     # if one of bvp didn't succeed, then return a big number to avoid bad guesses
-    if (not sol1.success) or (not sol2.success):
-        print("One or both of the bvp did not succeed.")
-        return np.sign(r_s - R_s)*1e9
+    if (not sol_sub.success) or (not sol_cor.success):
+        raise RuntimeError(f"BVP failed while evaluating stress jump at r_s = {r_s}")
 
     # Evaluate each side at the interface
-    r1_s, rp1_s = sol1.sol(np.array([R_s]))
-    r2_s, rp2_s = sol2.sol(np.array([R_s]))
+    r_s_sub, r_prime_sub = sol_sub.sol(np.array([R_s]))
+    r_s_cor, r_prime_cor = sol_cor.sol(np.array([R_s]))
 
-    P_RR_1, _, _ = stresses(np.array([R_s]), np.array([r1_s[0]]), np.array([rp1_s[0]]), subcortex_vals)
-    P_RR_2, _, _ = stresses(np.array([R_s]), np.array([r2_s[0]]), np.array([rp2_s[0]]), cortex_vals)
+    P_RR_sub, _, _ = stresses(np.array([R_s]), np.array([r_s_sub[0]]), np.array([r_prime_sub[0]]), subcortex_vals)
+    P_RR_cor, _, _ = stresses(np.array([R_s]), np.array([r_s_cor[0]]), np.array([r_prime_cor[0]]), cortex_vals)
 
-    return P_RR_1[0] - P_RR_2[0]
+    return P_RR_sub[0] - P_RR_cor[0]
 
 #####################################################################
 # Find r_s s.t. P_RR^-(R_s) = P_RR^+(R_s) using root finding method #
 #####################################################################
-def find_interface_displacement(R_s, r_guess_lo=None,
+def find_interface_displacement(r_guess_lo=None,
     r_guess_hi=None,
     max_expand=12,
     tol=1e-6):
 
     # default bracketing guesses
     if r_guess_lo is None:
-        r_guess_lo = 0.1*R_s
+        r_guess_lo = 1.001*R_v
     if r_guess_hi is None:
         r_guess_hi = 2*R_s
 
-    f_lo = stress_jump(r_guess_lo)
-    f_hi = stress_jump(r_guess_hi)
+    low_stress_diff = stress_jump(r_guess_lo) # returns P_RR_sub - P_RR_cor for low r_s guess
+    high_stress_diff = stress_jump(r_guess_hi) # returns P_RR_sub - P_RR_cor for high r_s guess
 
+    # making the guess interval wider until low_stress_diff and high_stress_diff are opp. signs
+    # i.e. there exists an r_s in the interval such that the stress difference is 0
     tries = 0
-    while f_lo*f_hi > 0 and tries < max_expand:
+    while (low_stress_diff * high_stress_diff) > 0 and tries < max_expand:
         r_guess_lo *= 0.7 # arbitrarily chosen to shrink low guess
         r_guess_hi *= 1.3 # arbitrarily chosen to increase high guess
-        f_lo = stress_jump(r_guess_lo)
-        f_hi = stress_jump(r_guess_hi)
+        low_stress_diff = stress_jump(r_guess_lo)
+        high_stress_diff = stress_jump(r_guess_hi)
         tries += 1
 
-    if f_lo*f_hi>0:
+    if low_stress_diff*high_stress_diff>0:
         raise RuntimeError("Could not bracket interface displacement r_s. System may be unstable or parameters too extreme.")
 
     root = root_scalar(stress_jump, bracket=(r_guess_lo, r_guess_hi), method='brentq', xtol=tol)
 
     if not root.converged:
         raise RuntimeError("Root-finding for interface displacement failed.")
+    else:
+        print("Successfully found root!")
 
     # print(f"Bracketed interface displacement r(R_s) = {root.root:.6f}")
     # print(f"Final stress jump = {stress_jump(root.root):.3e}")
 
     return root.root
 
-r_s_star = find_interface_displacement(R_s)
+r_s_star = find_interface_displacement()
 
 # Solve one last time with the matched interface displacement
 cortex_solution = solve_cortex(r_s_star)
 subcortex_solution = solve_subcortex(r_s_star)
 
-print("Subcortex converged:", subcortex_solution.success, subcortex_solution.message)
-print("Cortex converged:   ", cortex_solution.success, cortex_solution.message)
+r_s_sub, r_prime_sub = subcortex_solution.sol(np.array([R_s]))
+r_s_cor, r_prime_cor = cortex_solution.sol(np.array([R_s]))
 
-def solve_base_state():
-    """
-    Solve the matched two-region base state using the current parameter dictionaries:
-      subcortex_vals, cortex_vals
-    Returns: (subcortex_solution, cortex_solution, r_s_star)
-    """
-    r_s_star = find_interface_displacement(R_s)
-    cortex_solution = solve_cortex(r_s_star)
-    subcortex_solution = solve_subcortex(r_s_star)
+P_RR_sub, _, _ = stresses(np.array([R_s]), np.array([r_s_sub[0]]), np.array([r_prime_sub[0]]), subcortex_vals)
+P_RR_cor, _, _ = stresses(np.array([R_s]), np.array([r_s_cor[0]]), np.array([r_prime_cor[0]]), cortex_vals)
+print("Stress in at the interface for P_RR_sub: ", P_RR_sub)
+print("Stress in at the interface for P_RR_cor: ", P_RR_cor)
 
-    if (not subcortex_solution.success) or (not cortex_solution.success):
-        raise RuntimeError("Base-state BVP did not converge.")
-
-    return subcortex_solution, cortex_solution, r_s_star
-
-
-if __name__ == "__main__":
-    sub_sol, cor_sol, r_s_star = solve_base_state()
-    print("Interface displacement r(R_s) =", r_s_star)
-    print("Subcortex converged:", sub_sol.success, sub_sol.message)
-    print("Cortex converged:   ", cor_sol.success, cor_sol.message)
-
-
-
+################################################
+# THIS IS USED FOR THE STABILITY ANALYSIS CODE #
+################################################
+# def solve_base_state():
+#     """
+#     Solve the matched two-region base state using the current parameter dictionaries:
+#       subcortex_vals, cortex_vals
+#     Returns: (subcortex_solution, cortex_solution, r_s_star)
+#     """
+#     r_s_star = find_interface_displacement(R_s)
+#     cortex_solution = solve_cortex(r_s_star)
+#     subcortex_solution = solve_subcortex(r_s_star)
+#
+#     if (not subcortex_solution.success) or (not cortex_solution.success):
+#         raise RuntimeError("Base-state BVP did not converge.")
+#
+#     return subcortex_solution, cortex_solution, r_s_star
+#
+#
+# if __name__ == "__main__":
+#     sub_sol, cor_sol, r_s_star = solve_base_state()
+#     print("Interface displacement r(R_s) =", r_s_star)
+#     print("Subcortex converged:", sub_sol.success, sub_sol.message)
+#     print("Cortex converged:   ", cor_sol.success, cor_sol.message)
 
 
 #######################################################
@@ -313,6 +333,9 @@ def instability_check(cortex_solution, subcortex_solution):
     print(f"Instability ratio: {ratio}")
 
 instability_check(cortex_solution, subcortex_solution)
+
+
+
 
 ############
 # PLOTTING #
