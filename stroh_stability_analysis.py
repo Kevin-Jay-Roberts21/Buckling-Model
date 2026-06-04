@@ -9,7 +9,6 @@ from numpy.linalg import det, solve, inv
 from scipy.integrate import solve_ivp
 from scipy.optimize import minimize_scalar
 
-# import radially symmetric solver
 import radially_symmetric_solution_two_region as base
 
 ###########################################################
@@ -336,15 +335,15 @@ def integrate_eta(base_state, ode, eta_0, rtol=1e-6, atol=1e-9):
     eta_Rc = sol2.y[:, -1]
     return eta_Rc
 
-#####################################################################
-# Deriving the shooting matrix and stability indicator Φ = |det(S)| #
-#####################################################################
-def shooting_matrix_S(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
+##########################################################################
+# Deriving the compatibility matrix and stability indicator Φ = |det(B)| #
+##########################################################################
+def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
 
     base_state = solve_base_state_for_gthetac(g_theta_c)
     ode = make_eta_ode(base_state, m, k)
 
-    S = np.zeros((3, 3), dtype=complex)
+    B = np.zeros((3, 3), dtype=complex)
 
     # --- choose 3 independent initial states consistent with inner BC ---
     if base.INNER_BC == "fixed":
@@ -377,23 +376,118 @@ def shooting_matrix_S(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
         eta_0 = initials[j]
         eta_Rc = integrate_eta(base_state, ode, eta_0, rtol=rtol, atol=atol)
         res = outer_bc_residual(base_state, m, k, eta_Rc)
-        S[:, j] = res
+        B[:, j] = res
 
-    return S
+    return B
 
-def stability_indicators(S):
-    svals = np.linalg.svd(S, compute_uv=False)
+def stability_indicators(B):
+    svals = np.linalg.svd(B, compute_uv=False)
     smin = float(svals[-1])
     cond = float(svals[0] / svals[-1])
     # log10|det| is less insane than |det|
-    sign, logabsdet = np.linalg.slogdet(S)
+    sign, logabsdet = np.linalg.slogdet(B)
     log10absdet = float(logabsdet / np.log(10.0))
     return smin, cond, log10absdet
 
 def Phi(g_theta_c, m, k):
-    S = shooting_matrix_S(g_theta_c, m, k)
-    smin, cond, log10absdet = stability_indicators(S)
+    B = compatibility_matrix_B(g_theta_c, m, k)
+    smin, cond, log10absdet = stability_indicators(B)
     return smin, cond, log10absdet
+
+# todo: Need to review this
+def classify_buckling_status(smin, condB,
+                             buckling_tol=1e-6,
+                             candidate_tol=1e-1,
+                             cond_candidate_tol=1e5):
+    if smin < buckling_tol:
+        return "LIKELY BUCKLING"
+    elif smin < candidate_tol and condB > cond_candidate_tol:
+        return "CANDIDATE BUCKLING — refine locally"
+    else:
+        return "NO CLEAR BUCKLING"
+
+
+def scan_growth_with_buckling_flag(
+    g_min, g_max, n, m, k,
+    buckling_tol=1e-6,
+    candidate_tol=1e-1,
+    cond_candidate_tol=1e5
+):
+    gs = np.linspace(g_min, g_max, n)
+
+    smins = np.full(n, np.nan)
+    conds = np.full(n, np.nan)
+    logdets = np.full(n, np.nan)
+    statuses = np.empty(n, dtype=object)
+
+    for i, g in enumerate(gs):
+        try:
+            smin, condB, log10det = Phi(float(g), m, k)
+
+            smins[i] = smin
+            conds[i] = condB
+            logdets[i] = log10det
+
+            status = classify_buckling_status(
+                smin=smin,
+                condB=condB,
+                buckling_tol=buckling_tol,
+                candidate_tol=candidate_tol,
+                cond_candidate_tol=cond_candidate_tol
+            )
+
+            statuses[i] = status
+
+            print(
+                f"g={g:.6f}, "
+                f"smin(B)={smin:.3e}, "
+                f"cond(B)={condB:.3e}, "
+                f"log10|det(B)|={log10det:.2f}, "
+                f"status={status}"
+            )
+
+        except Exception as e:
+            statuses[i] = "ERROR"
+            print(f"g={g:.6f}: ERROR: {e}")
+
+    flags = np.array([status == "LIKELY BUCKLING" for status in statuses])
+    candidates = np.array(["CANDIDATE" in str(status) for status in statuses])
+
+    return gs, smins, conds, logdets, flags, candidates, statuses
+
+# todo: need to review this
+def plot_buckling_scan(gs, smins, conds, flags, m, k):
+    import matplotlib.pyplot as plt
+
+    finite = np.isfinite(smins)
+
+    plt.figure()
+    plt.semilogy(gs[finite], smins[finite], marker="o")
+    plt.xlabel(r"$g_{\theta_c}$")
+    plt.ylabel(r"Smallest singular value of $B$")
+    plt.title(f"Buckling indicator for mode m={m}, k={k}")
+    plt.grid(True)
+
+    if np.any(flags):
+        g_first = gs[np.where(flags)[0][0]]
+        plt.axvline(g_first, linestyle="--", label=f"first flagged g={g_first:.6f}")
+        plt.legend()
+
+    plt.show()
+
+    plt.figure()
+    plt.semilogy(gs[finite], conds[finite], marker="o")
+    plt.xlabel(r"$g_{\theta_c}$")
+    plt.ylabel(r"Condition number of $B$")
+    plt.title(f"Condition number for mode m={m}, k={k}")
+    plt.grid(True)
+
+    if np.any(flags):
+        g_first = gs[np.where(flags)[0][0]]
+        plt.axvline(g_first, linestyle="--", label=f"first flagged g={g_first:.6f}")
+        plt.legend()
+
+    plt.show()
 
 
 #########################################
@@ -489,8 +583,8 @@ def find_critical_g_theta_c(
 
     # ---- bounded refine ----
     def smin_of_g(g):
-        S = shooting_matrix_S(float(g), m, k)
-        svals = np.linalg.svd(S, compute_uv=False)
+        B = compatibility_matrix_B(float(g), m, k)
+        svals = np.linalg.svd(B, compute_uv=False)
         return float(svals[-1])
 
     res = minimize_scalar(
@@ -503,8 +597,8 @@ def find_critical_g_theta_c(
     gcrit = float(res.x)
 
     # ---- verification at gcrit ----
-    Scrit = shooting_matrix_S(gcrit, m, k)
-    U, svals, Vh = np.linalg.svd(Scrit)
+    Bcrit = compatibility_matrix_B(gcrit, m, k)
+    U, svals, Vh = np.linalg.svd(Bcrit)
     v_null = Vh[-1, :].conj().T
     smin_crit = float(svals[-1])
     cond_crit = float(svals[0] / svals[-1])
@@ -521,12 +615,12 @@ def find_critical_g_theta_c(
         "opt_message": str(res.message),
         "opt_fun": float(res.fun),
         "gcrit": gcrit,
-        "Scrit": Scrit,
+        "Bcrit": Bcrit,
         "svals_crit": svals,
         "smin_crit": smin_crit,
         "cond_crit": cond_crit,
         "v_null": v_null,
-        "Sv_norm": float(np.linalg.norm(Scrit @ v_null)),
+        "Bv_norm": float(np.linalg.norm(Bcrit @ v_null)),
     }
 
     if verbose:
@@ -535,55 +629,65 @@ def find_critical_g_theta_c(
         print(f"  svals = {svals}")
         print(f"  smin  = {smin_crit:.3e}")
         print(f"  cond  = {cond_crit:.3e}")
-        print(f"  ||S v|| = {info['Sv_norm']:.3e}")
+        print(f"  ||B v|| = {info['Bv_norm']:.3e}")
         print(f"  v_null = {v_null}")
 
     return gcrit, info
 
 
 
-
+# todo: need to review this
 if __name__ == "__main__":
-    # Choose a mode
     m = 8
     k = 0.0
 
-    # Global search range
-    g_min = 1.0
-    g_max = 3.0
+    g_min = 2.25
+    g_max = 2.28
+    n = 181
 
-    # 1) Find critical using scan + bounded refine
-    gcrit, info = find_critical_g_theta_c(
-        g_min=g_min, g_max=g_max,
-        m=m, k=k,
-        n_scan=401,          # coarse scan resolution
-        smin_trigger=1e-4,   # adjust if needed
-        refine_pad=2,
-        xatol=1e-10,
-        verbose=True
+    buckling_tol = 1e-6
+    candidate_tol = 1e-1
+    cond_candidate_tol = 1e5
+
+    gs, smins, conds, logdets, flags, candidates, statuses = scan_growth_with_buckling_flag(
+        g_min=g_min,
+        g_max=g_max,
+        n=n,
+        m=m,
+        k=k,
+        buckling_tol=buckling_tol,
+        candidate_tol=candidate_tol,
+        cond_candidate_tol=cond_candidate_tol
     )
 
-    # 2) (Optional) print a small summary
-    print("\nSUMMARY")
-    print(f"  gcrit ≈ {gcrit:.12f}")
-    print(f"  smin(gcrit) ≈ {info['smin_crit']:.3e}")
-    print(f"  cond(S(gcrit)) ≈ {info['cond_crit']:.3e}")
+    plot_buckling_scan(gs, smins, conds, flags | candidates, m, k)
 
-    # 3) (Optional) keep your old scan printout for comparison
-    n = 41
-    gs, phis, conds = scan_g_theta_c(g_min, g_max, n, m, k)
+    if np.any(flags):
+        idx = np.where(flags)[0][0]
+        print("\nLIKELY BUCKLING DETECTED")
+        print(f"  first flagged g_theta_c = {gs[idx]:.10f}")
+        print(f"  smin(B) = {smins[idx]:.3e}")
+        print(f"  cond(B) = {conds[idx]:.3e}")
 
-    if np.all(np.isnan(phis)):
-        raise RuntimeError("All Phi values were NaN. See scan errors above.")
+    elif np.any(candidates):
+        idx = np.where(candidates)[0][0]
+        best_idx = np.nanargmin(smins)
 
-    j = np.nanargmin(phis)
-    print("\nBest scan grid point (coarse):")
-    print(f"  g_theta_c ≈ {gs[j]:.6f}, smin ≈ {phis[j]:.3e}, cond(S) ≈ {conds[j]:.3e}")
+        print("\nCANDIDATE BUCKLING DETECTED — refine locally")
+        print(f"  first candidate g_theta_c = {gs[idx]:.10f}")
+        print(f"  best candidate g_theta_c = {gs[best_idx]:.10f}")
+        print(f"  min smin(B) = {smins[best_idx]:.3e}")
+        print(f"  cond(B) = {conds[best_idx]:.3e}")
+        print("\nSuggested refined scan:")
+        print(f"  g_min = {gs[best_idx] - 0.5:.6f}")
+        print(f"  g_max = {gs[best_idx] + 0.5:.6f}")
+        print("  n = 301")
 
-    # 4) Verify at the refined gcrit too (already in info, but here’s the print)
-    Scrit = info["Scrit"]
-    svals = info["svals_crit"]
-    print("\nSVD at refined gcrit:")
-    print("  singular values:", svals)
-    print("  cond:", svals[0] / svals[-1])
+    else:
+        idx = np.nanargmin(smins)
+        print("\nNO CLEAR BUCKLING DETECTED IN THIS RANGE")
+        print("Smallest value found was only the best dip, not necessarily a threshold:")
+        print(f"  best g_theta_c = {gs[idx]:.10f}")
+        print(f"  min smin(B) = {smins[idx]:.3e}")
+        print(f"  cond(B) = {conds[idx]:.3e}")
 

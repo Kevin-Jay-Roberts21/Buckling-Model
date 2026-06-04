@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 # Defining the material parameters and geometry #
 #################################################
 R_v = 50 # 1 # void radius (um)
-R_s = 190 # 190 # subcortex radius (um)
+R_s = 150 # 190 # subcortex radius (um)
 R_c = 200 # cortex radius (um)
 
 lambda_c = 0.3 * 10**4 # bulk modulus in cortex region (Pa)
@@ -257,8 +257,7 @@ def find_interface_displacement(r_guess_lo=None,
 
     if not root.converged:
         raise RuntimeError("Root-finding for interface displacement failed.")
-    else:
-        print("Successfully found root!")
+
 
     # print(f"Bracketed interface displacement r(R_s) = {root.root:.6f}")
     # print(f"Final stress jump = {stress_jump(root.root):.3e}")
@@ -282,27 +281,27 @@ print("Stress in at the interface for P_RR_cor: ", P_RR_cor)
 ################################################
 # THIS IS USED FOR THE STABILITY ANALYSIS CODE #
 ################################################
-# def solve_base_state():
-#     """
-#     Solve the matched two-region base state using the current parameter dictionaries:
-#       subcortex_vals, cortex_vals
-#     Returns: (subcortex_solution, cortex_solution, r_s_star)
-#     """
-#     r_s_star = find_interface_displacement(R_s)
-#     cortex_solution = solve_cortex(r_s_star)
-#     subcortex_solution = solve_subcortex(r_s_star)
-#
-#     if (not subcortex_solution.success) or (not cortex_solution.success):
-#         raise RuntimeError("Base-state BVP did not converge.")
-#
-#     return subcortex_solution, cortex_solution, r_s_star
-#
-#
-# if __name__ == "__main__":
-#     sub_sol, cor_sol, r_s_star = solve_base_state()
-#     print("Interface displacement r(R_s) =", r_s_star)
-#     print("Subcortex converged:", sub_sol.success, sub_sol.message)
-#     print("Cortex converged:   ", cor_sol.success, cor_sol.message)
+def solve_base_state():
+    """
+    Solve the matched two-region base state using the current parameter dictionaries:
+      subcortex_vals, cortex_vals
+    Returns: (subcortex_solution, cortex_solution, r_s_star)
+    """
+    r_s_star = find_interface_displacement()
+    cortex_solution = solve_cortex(r_s_star)
+    subcortex_solution = solve_subcortex(r_s_star)
+
+    if (not subcortex_solution.success) or (not cortex_solution.success):
+        raise RuntimeError("Base-state BVP did not converge.")
+
+    return subcortex_solution, cortex_solution, r_s_star
+
+
+if __name__ == "__main__":
+    sub_sol, cor_sol, r_s_star = solve_base_state()
+    print("Interface displacement r(R_s) =", r_s_star)
+    print("Subcortex converged:", sub_sol.success, sub_sol.message)
+    print("Cortex converged:   ", cor_sol.success, cor_sol.message)
 
 
 #######################################################
