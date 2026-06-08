@@ -638,11 +638,11 @@ def find_critical_g_theta_c(
 
 # todo: need to review this
 if __name__ == "__main__":
-    m = 8
+    m = 14
     k = 0.0
 
-    g_min = 2.25
-    g_max = 2.28
+    g_min = 2.460167
+    g_max = 2.460189
     n = 181
 
     buckling_tol = 1e-6
