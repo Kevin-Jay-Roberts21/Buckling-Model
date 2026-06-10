@@ -14,30 +14,31 @@ import radially_symmetric_solution_two_region as base
 ###########################################################
 # USING RADIALLY SYMMETRIC SOLUTION TO GET THE BASE STATE #
 ###########################################################
-# For convenience, we write a "base state" wrapper as a class, getting all of the
-# information from the radially symmetric solution
+# For convenience, we write a "base state" wrapper as a
+# class, getting all of the information from the radially
+# symmetric solution
 class BaseState:
-    # Holds the piecewise base solution r(R), r'(R) from solve_bvp objects and
-    # provides evaluation+region selection
+    # Holds the piecewise base solution r(R), r'(R) from solve_bvp from the radially_symmetric_two_region.py code
     def __init__(self, subcortex_sol, cortex_sol):
         self.subcortex_sol = subcortex_sol
         self.cortex_sol = cortex_sol
 
-    def eval(self, R):
+    def base_state_params_given_R(self, R):
         # returns (r, r_prime, region_name) at scalar R
         R = float(R)
+
+        # if the given R is in the subcortex region
         if R <= base.R_s:
             r, r_prime = self.subcortex_sol.sol(np.array([R]))
             return float(r[0]), float(r_prime[0]), "subcortex"
+        # if the given R is in the coretx region
         else:
             r, r_prime = self.cortex_sol.sol(np.array([R]))
             return float(r[0]), float(r_prime[0]), "cortex"
 
 def solve_base_state_for_gthetac(g_theta_c):
-    """
-    Update cortex g_theta, solve the radial base state, and return a BaseState object.
-    """
-    # Update cortex growth multiplier in-place (radial solver reads cortex_vals)
+
+    # Update cortex growth multiplier
     base.cortex_vals["g_theta"] = float(g_theta_c)
 
     # Solve the base state using the radial solver's function
@@ -59,33 +60,37 @@ def deltaF_hat(R, uhat, uhat_prime, m, k):
     u_r, u_theta, u_z = uhat
     u_r_prime, u_theta_prime, u_z_prime = uhat_prime
 
-    # defining the delta F hat matrix and it's components
+    # defining the delta F hat matrix
     dF_hat = np.zeros((3,3), dtype=complex)
+
+    # defining the components of the delta F hat matrix (first row)
     dF_hat[0, 0] = u_r_prime
     dF_hat[0, 1] = (i*m/R)*u_r - u_theta/R
     dF_hat[0, 2] = (i*k)*u_r
 
+    # second row
     dF_hat[1, 0] = u_theta_prime
     dF_hat[1, 1] = (i*m/R)*u_theta + u_r/R
     dF_hat[1, 2] = (i*k)*u_theta
 
+    # third row
     dF_hat[2, 0] = u_z_prime
     dF_hat[2, 1] = (i*m/R)*u_z
     dF_hat[2, 2] = (i*k)*u_z
 
     return dF_hat
 
-#####################################
-# Defining linearized, Piola stress #
-#####################################
+####################################
+# Defining linearized Piola stress #
+####################################
 def deltaP_hat(dF, F_0, Fg, lambd, mu):
 
     # Fg matrix computations
     Fg_inverse = inv(Fg)
     Fg_inverse_transpose = Fg_inverse.T
 
-    # Fe_0 matrix definition and computations
-    Fe_0 = F_0 @ Fg_inverse # the symbol @ just compute matrix multiplication
+    # Fe_0 matrix definition and computations (the symbol @ means matrix multiplication)
+    Fe_0 = F_0 @ Fg_inverse
     Fe_0_inverse = inv(Fe_0)
     Fe_0_inverse_transpose = Fe_0_inverse.T
     Je_0 = det(Fe_0)
@@ -105,68 +110,73 @@ def deltaP_hat(dF, F_0, Fg, lambd, mu):
 ##########################################################
 # Defining the rhs of the linearized boundary conditions #
 ##########################################################
-def incremental_pressure_rhs(dF, F_0, P_f, Nsign=+1.0):
+def boundary_condition_rhs(dF, F_0, P_f, Nsign=+1.0):
 
     # defining the F_0 matrix computations
     F_0_inverse = inv(F_0)
     F_0_inverse_transpose = F_0_inverse.T
     J_0 = det(F_0)
 
-    # defining the normal vector N
+    # defining the normal vector N (Note: the Nsign is +1 if outer boundary, and -1 if inner boundary)
     N = np.array([Nsign, 0, 0], dtype=complex)
 
     rhs = -P_f*J_0*((np.trace(F_0_inverse@dF)*F_0_inverse_transpose - (F_0_inverse_transpose @ dF.T @ F_0_inverse_transpose)) @ N)
 
     return rhs
 
-###############################################################
-# Stroh building blocks: t = Qu' + Ru, with u' = Q^{-1}(t-Ru) #
-###############################################################
+###########################
+# Stroh matrices: Q and W #
+###########################
 def stroh_QR_matrices(R, F_0, Fg, lambd, mu, m, k):
-    Rmat = np.zeros((3, 3), dtype=complex)
-    up0 = np.zeros(3, dtype=complex)
+
+    # build W from: t = Wu when u' = 0
+    W = np.zeros((3, 3), dtype=complex)
+    uhat_prime_0 = np.zeros(3, dtype=complex)
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        dF = deltaF_hat(R, ej, up0, m, k)
+        dF = deltaF_hat(R, ej, uhat_prime_0, m, k)
         dP = deltaP_hat(dF, F_0, Fg, lambd, mu)
-        Rmat[:, j] = np.array([dP[0, 0], dP[1, 0], dP[2, 0]], dtype=complex)
+        W[:, j] = np.array([dP[0, 0], dP[1, 0], dP[2, 0]], dtype=complex)
 
-    Qmat = np.zeros((3, 3), dtype=complex)
-    u0 = np.zeros(3, dtype=complex)
+    # build Q from: t = Qu' when u = 0
+    Q = np.zeros((3, 3), dtype=complex)
+    uhat_0 = np.zeros(3, dtype=complex)
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        dF = deltaF_hat(R, u0, ej, m, k)
+        dF = deltaF_hat(R, uhat_0, ej, m, k)
         dP = deltaP_hat(dF, F_0, Fg, lambd, mu)
-        Qmat[:, j] = np.array([dP[0, 0], dP[1, 0], dP[2, 0]], dtype=complex)
+        Q[:, j] = np.array([dP[0, 0], dP[1, 0], dP[2, 0]], dtype=complex)
 
-    return Qmat, Rmat
+    return Q, W
 
+#######################################
+# Calculating u' = Q^{-1}(that - W u) #
+#######################################
 def reconstruct_uhat_prime(R, uhat, that, F_0, Fg, lambd, mu, m, k):
-    """
-    Using Stroh: that = Q u' + R u  => u' = Q^{-1}(that - R u).
-    """
-    Qmat, Rmat = stroh_QR_matrices(R, F_0, Fg, lambd, mu, m, k)
-    uhat_prime = solve(Qmat, that - Rmat @ uhat)
+
+    Q, W = stroh_QR_matrices(R, F_0, Fg, lambd, mu, m, k)
+    uhat_prime = solve(Q, that - W @ uhat)
+
     return uhat_prime
 
 
-###############################################
-# Build the Stroh-style ODE: eta' = f(R, eta) #
-###############################################
+####################################################
+# Build the Stroh-style ODE: eta' = (uhat', that') #
+####################################################
 def make_eta_ode(base_state, m, k):
 
-    # define a function f to give to solve_ivp and return it
-    def f(R, eta):
+    # define the function eta_prime to give to solve_ivp and return it
+    def eta_prime(R, eta):
         R = float(R)
-        R = max(R, 1e-12)
+        R = max(R, 1e-12) # ensuring R is not approximately 0, avoiding division errors
 
         uhat = eta[0:3].astype(complex)
         that = eta[3:6].astype(complex) # traction conditions
 
-        # defining properties a the base state
-        r, r_prime, region = base_state.eval(R)
+        # defining properties of the base state
+        r, r_prime, region = base_state.base_state_params_given_R(R)
 
         # choose region params
         if region == "subcortex":
@@ -195,21 +205,20 @@ def make_eta_ode(base_state, m, k):
 
         # Extract needed stress components for the Div equations
         dP_RR = dP[0, 0]
-        dP_ThetaTheta = dP[1, 1]
         dP_RTheta = dP[0, 1]
-
         dP_RZ = dP[0, 2]
+
         dP_ThetaR = dP[1, 0]
+        dP_ThetaTheta = dP[1, 1]
         dP_ThetaZ = dP[1, 2]
 
         dP_ZR = dP[2, 0]
         dP_ZTheta = dP[2, 1]
         dP_ZZ = dP[2, 2]
 
-        # complex number
-        i = 1j
-
         # STEP 3: equilibrium gives that', where that = [deltaP_RR, deltaP_ThetaR, deltaP_ZR]
+        i = 1j # complex number
+
         delta_that_R = -(1/R)*(dP_RR - dP_ThetaTheta) - (i*m/R)*dP_RTheta - (i*k)*dP_RZ
         delta_that_Theta = -(1/R)*(dP_ThetaR + dP_RTheta) - (i*m/R)*dP_ThetaTheta - (i*k)*dP_ThetaZ
         delta_that_Z = -(1/R)*dP_ZR - (i*m/R)*dP_ZTheta - (i*k)*dP_ZZ
@@ -220,51 +229,51 @@ def make_eta_ode(base_state, m, k):
 
         return eta_prime
 
-    return f
+    return eta_prime
 
-#####################################################
-# Boundary condition in Stroh form: Bu u + Bt t = 0 #
-#####################################################
+####################################
+# Boundary condition in Stroh form #
+####################################
 def pressure_bc_operator(BR, F_0, Fg, lambd, mu, m, k, P_f, Nsign):
 
     # Build Q,R at boundary
-    Qmat, Rmat = stroh_QR_matrices(BR, F_0, Fg, lambd, mu, m, k)
-    Qinv = inv(Qmat)
+    Q, W = stroh_QR_matrices(BR, F_0, Fg, lambd, mu, m, k)
+    Q_inv = inv(Q)
 
-    def rhs_from_ut(u, t):
-        # u' = Q^{-1}(t - R u)
-        up = Qinv @ (t - Rmat @ u)
-        dF = deltaF_hat(BR, u, up, m, k)
-        rhs = incremental_pressure_rhs(dF, F_0, P_f, Nsign=Nsign)
-        return rhs
+    # Build linear rhs terms
+    S_0 = np.zeros((3, 3), dtype=complex)
+    S_1 = np.zeros((3, 3), dtype=complex)
 
-    # Build linear maps Mu, Mt such that rhs = Mu u + Mt t
-    Mu = np.zeros((3, 3), dtype=complex)
-    Mt = np.zeros((3, 3), dtype=complex)
+    uhat_0 = np.zeros(3, dtype=complex)
+    uhat_prime_0 = np.zeros(3, dtype=complex)
 
-    t0 = np.zeros(3, dtype=complex)
+    # Build S_0 for u' = 0
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        Mu[:, j] = rhs_from_ut(ej, t0)
+        dF = deltaF_hat(BR, ej, uhat_prime_0, m, k)
+        S_0[:, j] = boundary_condition_rhs(dF, F_0, P_f, Nsign=Nsign)
 
-    u0 = np.zeros(3, dtype=complex)
+    # Build S_1 for u = 0
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        Mt[:, j] = rhs_from_ut(u0, ej)
+        dF = deltaF_hat(BR, uhat_0, ej, m, k)
+        S_1[:, j] = boundary_condition_rhs(dF, F_0, P_f, Nsign=Nsign)
 
-    # Residual: (deltaP*N) - rhs = (Nsign*t) - (Mu u + Mt t)
-    # => (-Mu) u + (Nsign*I - Mt) t
-    Bu = -Mu
-    Bt = (Nsign * np.eye(3, dtype=complex)) - Mt
+    pressure_rhs_u = S_0 - S_1 @ Q_inv @ W
+    pressure_rhs_t = S_1 @ Q_inv
+
+    # pressure_rhs = (S_0 - S_1*Q^{-1}*W)*u + (S_1*Q^{-1})*t
+    Bu = -pressure_rhs_u
+    Bt = (Nsign * np.eye(3, dtype=complex)) - pressure_rhs_t
     return Bu, Bt
 
 def inner_bc_matrices(base_state, m, k):
 
     R = max(float(base.R_v), 1e-12)
 
-    r, r_prime, _region = base_state.eval(R)
+    r, r_prime, _region = base_state.base_state_params_given_R(R)
     params = base.subcortex_vals
     lambd = params["lambd"]
     mu = params["mu"]
@@ -291,7 +300,7 @@ def outer_bc_residual(base_state, m, k, eta_at_R_c):
     uhat = eta_at_R_c[0:3].astype(complex)
     that = eta_at_R_c[3:6].astype(complex)
 
-    r, r_prime, region = base_state.eval(R)
+    r, r_prime, region = base_state.base_state_params_given_R(R)
     params = base.cortex_vals
     lambd = params["lambd"]
     mu = params["mu"]
