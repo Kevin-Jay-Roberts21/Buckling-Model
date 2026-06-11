@@ -110,7 +110,7 @@ def deltaP_hat(dF, F_0, Fg, lambd, mu):
 ##########################################################
 # Defining the rhs of the linearized boundary conditions #
 ##########################################################
-def boundary_condition_rhs(dF, F_0, P_f, Nsign=+1.0):
+def boundary_condition_rhs(dF, F_0, P_f, N_R=+1.0):
 
     # defining the F_0 matrix computations
     F_0_inverse = inv(F_0)
@@ -118,7 +118,7 @@ def boundary_condition_rhs(dF, F_0, P_f, Nsign=+1.0):
     J_0 = det(F_0)
 
     # defining the normal vector N (Note: the Nsign is +1 if outer boundary, and -1 if inner boundary)
-    N = np.array([Nsign, 0, 0], dtype=complex)
+    N = np.array([N_R, 0, 0], dtype=complex)
 
     rhs = -P_f*J_0*((np.trace(F_0_inverse@dF)*F_0_inverse_transpose - (F_0_inverse_transpose @ dF.T @ F_0_inverse_transpose)) @ N)
 
@@ -234,10 +234,10 @@ def make_eta_ode(base_state, m, k):
 ####################################
 # Boundary condition in Stroh form #
 ####################################
-def pressure_bc_operator(BR, F_0, Fg, lambd, mu, m, k, P_f, Nsign):
+def pressure_bc_operator(R_boundary, F_0, Fg, lambd, mu, m, k, P_f, N_R):
 
     # Build Q,R at boundary
-    Q, W = stroh_QR_matrices(BR, F_0, Fg, lambd, mu, m, k)
+    Q, W = stroh_QR_matrices(R_boundary, F_0, Fg, lambd, mu, m, k)
     Q_inv = inv(Q)
 
     # Build linear rhs terms
@@ -251,24 +251,24 @@ def pressure_bc_operator(BR, F_0, Fg, lambd, mu, m, k, P_f, Nsign):
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        dF = deltaF_hat(BR, ej, uhat_prime_0, m, k)
-        S_0[:, j] = boundary_condition_rhs(dF, F_0, P_f, Nsign=Nsign)
+        dF = deltaF_hat(R_boundary, ej, uhat_prime_0, m, k)
+        S_0[:, j] = boundary_condition_rhs(dF, F_0, P_f, N_R=N_R)
 
     # Build S_1 for u = 0
     for j in range(3):
         ej = np.zeros(3, dtype=complex)
         ej[j] = 1.0
-        dF = deltaF_hat(BR, uhat_0, ej, m, k)
-        S_1[:, j] = boundary_condition_rhs(dF, F_0, P_f, Nsign=Nsign)
+        dF = deltaF_hat(R_boundary, uhat_0, ej, m, k)
+        S_1[:, j] = boundary_condition_rhs(dF, F_0, P_f, N_R=N_R)
 
-    pressure_rhs_u = S_0 - S_1 @ Q_inv @ W
-    pressure_rhs_t = S_1 @ Q_inv
-
-    # pressure_rhs = (S_0 - S_1*Q^{-1}*W)*u + (S_1*Q^{-1})*t
-    Bu = -pressure_rhs_u
-    Bt = (Nsign * np.eye(3, dtype=complex)) - pressure_rhs_t
+    # pressure_rhs
+    Bu = S_0 - S_1 @ Q_inv @ W
+    Bt = (N_R * np.eye(3, dtype=complex)) + S_1 @ Q_inv
     return Bu, Bt
 
+################################
+# Inner BC Matrices at R = R_v #
+################################
 def inner_bc_matrices(base_state, m, k):
 
     R = max(float(base.R_v), 1e-12)
@@ -285,8 +285,8 @@ def inner_bc_matrices(base_state, m, k):
     Fg  = np.diag([g_r, g_theta, g_z]).astype(complex)
 
     Bu, Bt = pressure_bc_operator(
-        BR=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
-        m=m, k=k, P_f=base.P_f, Nsign=-1.0  # N_s = (-1,0,0)
+        R_boundary=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
+        m=m, k=k, P_f=base.P_f, N_R=-1.0  # N_s = (-1,0,0)
     )
     return Bu, Bt
 
@@ -312,23 +312,22 @@ def outer_bc_residual(base_state, m, k, eta_at_R_c):
     Fg = np.diag([g_r, g_theta, g_z]).astype(complex)
 
     Bu, Bt = pressure_bc_operator(
-        BR=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
-        m=m, k=k, P_f=base.P_f, Nsign=+1.0
+        R_boundary=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
+        m=m, k=k, P_f=base.P_f, N_R=+1.0
     )
 
     return Bu @ uhat + Bt @ that
 
-#####################################################################
-# Deriving the shooting matrix and stability indicator Φ = |det(S)| #
-#####################################################################
-def integrate_eta(base_state, ode, eta_0, rtol=1e-6, atol=1e-9):
-    """
-    Integrate in two pieces [R_v,R_s] and [R_s,R_c] to match the paper narrative.
-    """
+#######################################################################################
+# Integrate Stroh state eta from R_v to R_c enforcing continuity at the interface R_s #
+#######################################################################################
+def integrate_eta(ode, eta_0, rtol=1e-6, atol=1e-9):
+
     R0 = base.R_v
     Rs = base.R_s
     Rc = base.R_c
 
+    # use built in solver that uses the RK45 method to solve for eta
     sol1 = solve_ivp(fun=ode, t_span=(R0, Rs), y0=eta_0,
                      method="RK45", rtol=rtol, atol=atol)
     if not sol1.success:
@@ -383,7 +382,7 @@ def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
     # --- propagate each admissible initial state, enforce outer BC ---
     for j in range(3):
         eta_0 = initials[j]
-        eta_Rc = integrate_eta(base_state, ode, eta_0, rtol=rtol, atol=atol)
+        eta_Rc = integrate_eta(ode, eta_0, rtol=rtol, atol=atol)
         res = outer_bc_residual(base_state, m, k, eta_Rc)
         B[:, j] = res
 
