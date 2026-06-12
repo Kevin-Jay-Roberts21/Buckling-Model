@@ -398,12 +398,14 @@ def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
 def stability_indicators(B):
     singular_values = np.linalg.svd(B, compute_uv=False)
     s_min = float(singular_values[-1]) # smallest singular value
+    s_max = float(singular_values[0]) # largest singular value
+    relative_s_min = float(s_min/s_max)
     cond = float(singular_values[0] / singular_values[-1]) # condition number
 
     detB = np.linalg.det(B)
     absolute_val_of_detB = float(abs(detB))
 
-    return absolute_val_of_detB, s_min, cond
+    return absolute_val_of_detB, s_min, relative_s_min, cond
 
 
 ###############################
@@ -414,6 +416,7 @@ def scan_g_theta_c(g_min, g_max, n, m, k, rtol=1e-6, atol=1e-9):
 
     absolute_val_of_detBs = np.full(n, np.nan)
     s_mins = np.full(n, np.nan)
+    relative_s_mins = np.full(n, np.nan)
     conds = np.full(n, np.nan)
 
     for i, g in enumerate(gs):
@@ -426,35 +429,37 @@ def scan_g_theta_c(g_min, g_max, n, m, k, rtol=1e-6, atol=1e-9):
                 atol=atol
             )
 
-            absdet, smin, cond = stability_indicators(B)
+            absolute_val_of_detB, s_min, relative_s_min, cond = stability_indicators(B)
 
-            absolute_val_of_detBs[i] = absdet
-            s_mins[i] = smin
+            absolute_val_of_detBs[i] = absolute_val_of_detB
+            relative_s_mins[i] = relative_s_min
+            s_mins[i] = s_min
             conds[i] = cond
 
             print(
                 f"g_theta_c={g:.8f}, "
-                f"|det(B)|={absdet:.3e}, "
-                f"s_min(B)={smin:.3e}, "
+                f"|det(B)|={absolute_val_of_detB:.3e}, "
+                f"relative_s_min(B)={relative_s_min:.3e}, "
+                f"s_min(B)={s_min:.3e}, "
                 f"cond(B)={cond:.3e}"
             )
 
         except Exception as e:
             print(f"g_theta_c={g:.8f}: ERROR: {e}")
 
-    return gs, absolute_val_of_detBs, s_mins, conds
+    return gs, absolute_val_of_detBs, relative_s_mins, s_mins, conds
 
 ##################################################
 # Plotting det(B) and s_min(B) given a g_theta_c #
 ##################################################
-def plot_g_theta_scan(gs, absdets, smins, m, k):
+def plot_g_theta_scan(gs, absolute_val_of_detBs, relative_s_mins, s_mins, m, k):
     import matplotlib.pyplot as plt
 
-    finite_det = np.isfinite(absdets)
-    finite_smin = np.isfinite(smins)
+    finite_det = np.isfinite(absolute_val_of_detBs)
+    finite_smin = np.isfinite(s_mins)
 
     plt.figure()
-    plt.semilogy(gs[finite_det], absdets[finite_det], marker="o")
+    plt.semilogy(gs[finite_det], absolute_val_of_detBs[finite_det], marker="o")
     plt.xlabel(r"$g_{\theta_c}$")
     plt.ylabel(r"$|\det(B)|$")
     plt.title(f"Compatibility determinant for mode m={m}, k={k}")
@@ -462,7 +467,15 @@ def plot_g_theta_scan(gs, absdets, smins, m, k):
     plt.show()
 
     plt.figure()
-    plt.semilogy(gs[finite_smin], smins[finite_smin], marker="o")
+    plt.semilogy(gs[finite_smin], relative_s_mins[finite_smin], marker="o")
+    plt.xlabel(r"$g_{\theta_c}$")
+    plt.ylabel(r"Relatively smallest singular value of $B$: relative_s_min($B$)")
+    plt.title(f"Near-singularity indicator for mode m={m}, k={k}")
+    plt.grid(True)
+    plt.show()
+
+    plt.figure()
+    plt.semilogy(gs[finite_smin], s_mins[finite_smin], marker="o")
     plt.xlabel(r"$g_{\theta_c}$")
     plt.ylabel(r"Smallest singular value of $B$: s_min($B$)")
     plt.title(f"Near-singularity indicator for mode m={m}, k={k}")
@@ -474,14 +487,14 @@ def plot_g_theta_scan(gs, absdets, smins, m, k):
 # Running the main simulation #
 ###############################
 if __name__ == "__main__":
-    m = 14
+    m = 8
     k = 0.0
 
-    g_min = 2.46017
-    g_max = 2.46018
+    g_min = 2.26355
+    g_max = 2.26357
     n = 101
 
-    gs, absdets, smins, conds = scan_g_theta_c(
+    gs, absolute_val_of_detBs, relative_s_mins, s_mins, conds = scan_g_theta_c(
         g_min=g_min,
         g_max=g_max,
         n=n,
@@ -489,13 +502,14 @@ if __name__ == "__main__":
         k=k
     )
 
-    plot_g_theta_scan(gs, absdets, smins, m, k)
+    plot_g_theta_scan(gs, absolute_val_of_detBs, relative_s_mins, s_mins, m, k)
 
-    best_idx = np.nanargmin(smins)
+    best_idx = np.nanargmin(s_mins)
 
     print("\nBest near-buckling candidate in this scan:")
     print(f"  g_theta_c = {gs[best_idx]:.10f}")
-    print(f"  |det(B)|  = {absdets[best_idx]:.3e}")
-    print(f"  s_min(B)  = {smins[best_idx]:.3e}")
+    print(f"  |det(B)|  = {absolute_val_of_detBs[best_idx]:.3e}")
+    print(f"  relative_s_min(B)  = {relative_s_mins[best_idx]:.3e}")
+    print(f"  s_min(B)  = {s_mins[best_idx]:.3e}")
     print(f"  cond(B)  = {conds[best_idx]:.3e}")
 
