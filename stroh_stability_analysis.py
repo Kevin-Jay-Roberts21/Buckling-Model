@@ -262,9 +262,9 @@ def pressure_bc_operator(R_boundary, F_0, Fg, lambd, mu, m, k, P_f, N_R):
         S_1[:, j] = boundary_condition_rhs(dF, F_0, P_f, N_R=N_R)
 
     # pressure_rhs
-    Bu = S_0 - S_1 @ Q_inv @ W
-    Bt = (N_R * np.eye(3, dtype=complex)) + S_1 @ Q_inv
-    return Bu, Bt
+    B_t = (N_R * np.eye(3, dtype=complex)) - (S_1 @ Q_inv)
+    B_u = (S_1 @ Q_inv @ W) - S_0
+    return B_u, B_t
 
 ################################
 # Inner BC Matrices at R = R_v #
@@ -284,11 +284,11 @@ def inner_bc_matrices(base_state, m, k):
     F_0 = np.diag([r_prime, r / R, base.C_z]).astype(complex)
     Fg  = np.diag([g_r, g_theta, g_z]).astype(complex)
 
-    Bu, Bt = pressure_bc_operator(
+    B_u, B_t = pressure_bc_operator(
         R_boundary=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
         m=m, k=k, P_f=base.P_f, N_R=-1.0  # N_s = (-1,0,0)
     )
-    return Bu, Bt
+    return B_u, B_t
 
 ################################
 # Outer BC residual at R = R_c #
@@ -311,12 +311,12 @@ def outer_bc_residual(base_state, m, k, eta_at_R_c):
     F_0 = np.diag([r_prime, r / R, base.C_z]).astype(complex)
     Fg = np.diag([g_r, g_theta, g_z]).astype(complex)
 
-    Bu, Bt = pressure_bc_operator(
+    B_u, B_t = pressure_bc_operator(
         R_boundary=R, F_0=F_0, Fg=Fg, lambd=lambd, mu=mu,
-        m=m, k=k, P_f=base.P_f, N_R=+1.0
+        m=m, k=k, P_f=base.P_f, N_R=+1.0 # N_c = (1,0,0)
     )
 
-    return Bu @ uhat + Bt @ that
+    return B_u @ uhat + B_t @ that
 
 #######################################################################################
 # Integrate Stroh state eta from R_v to R_c enforcing continuity at the interface R_s #
@@ -327,25 +327,26 @@ def integrate_eta(ode, eta_0, rtol=1e-6, atol=1e-9):
     Rs = base.R_s
     Rc = base.R_c
 
-    # use built in solver that uses the RK45 method to solve for eta
+    # use built in solver that uses the RK45 method to solve for eta in subcortex region
     sol1 = solve_ivp(fun=ode, t_span=(R0, Rs), y0=eta_0,
                      method="RK45", rtol=rtol, atol=atol)
     if not sol1.success:
-        raise RuntimeError("IVP failed on [R_v,R_s]. " + sol1.message)
+        raise RuntimeError("IVP failed on [R_v, R_s]. " + sol1.message)
 
     eta_Rs = sol1.y[:, -1]
 
+    # use built in solver that uses the RK45 method to solve for eta in subcortex region
     sol2 = solve_ivp(fun=ode, t_span=(Rs, Rc), y0=eta_Rs,
                      method="RK45", rtol=rtol, atol=atol)
     if not sol2.success:
-        raise RuntimeError("IVP failed on [R_s,R_c]. " + sol2.message)
+        raise RuntimeError("IVP failed on [R_s, R_c]. " + sol2.message)
 
     eta_Rc = sol2.y[:, -1]
     return eta_Rc
 
-##########################################################################
-# Deriving the compatibility matrix and stability indicator Φ = |det(B)| #
-##########################################################################
+#######################################
+# Deriving the compatibility matrix B #
+#######################################
 def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
 
     base_state = solve_base_state_for_gthetac(g_theta_c)
@@ -353,349 +354,148 @@ def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
 
     B = np.zeros((3, 3), dtype=complex)
 
-    # --- choose 3 independent initial states consistent with inner BC ---
+    # Choosing 3 independent initial states that are consistent with the inner BC
     if base.INNER_BC == "fixed":
-        # u(R_v) = 0, choose traction basis
-        u0 = np.zeros(3, dtype=complex)
-        Tbasis = np.eye(3, dtype=complex)
 
-        initials = []
+        # Let u(R_v) = 0 and choose traction basis
+        u_0 = np.zeros(3, dtype=complex)
+        t_basis = np.eye(3, dtype=complex)
+
+        initial_eta = []
         for j in range(3):
-            t0 = Tbasis[:, j]
-            initials.append(np.concatenate([u0, t0]).astype(complex))
+            t_0 = t_basis[:, j]
+            initial_eta.append(np.concatenate([u_0, t_0]).astype(complex))
 
     elif base.INNER_BC == "pressure":
-        # Bu u + Bt t = 0 at R=R_v, choose u-basis and solve for t
-        Bu, Bt = inner_bc_matrices(base_state, m, k)
 
-        Ubasis = np.eye(3, dtype=complex)
-        initials = []
+        # Let B_u*uhat + B_t*that = 0 at R=R_v and choose u-basis and solve for t
+        B_u, B_t = inner_bc_matrices(base_state, m, k)
+        u_basis = np.eye(3, dtype=complex)
+
+        initial_eta = []
         for j in range(3):
-            u0 = Ubasis[:, j]
-            # Solve Bt t0 = -Bu u0
-            t0 = solve(Bt, -Bu @ u0)
-            initials.append(np.concatenate([u0, t0]).astype(complex))
+            u_0 = u_basis[:, j]
+
+            # Solve B_t*t_0 = -B_u*u_0
+            t_0 = solve(B_t, -B_u @ u_0)
+            initial_eta.append(np.concatenate([u_0, t_0]).astype(complex))
 
     else:
         raise ValueError("base.INNER_BC must be 'fixed' or 'pressure'.")
 
-    # --- propagate each admissible initial state, enforce outer BC ---
+    # propagate each initial state and enforce outer BC
     for j in range(3):
-        eta_0 = initials[j]
+        eta_0 = initial_eta[j]
         eta_Rc = integrate_eta(ode, eta_0, rtol=rtol, atol=atol)
         res = outer_bc_residual(base_state, m, k, eta_Rc)
         B[:, j] = res
 
     return B
 
+################################
+# Stability Indicator Function #
+################################
 def stability_indicators(B):
-    svals = np.linalg.svd(B, compute_uv=False)
-    smin = float(svals[-1])
-    cond = float(svals[0] / svals[-1])
-    # log10|det| is less insane than |det|
-    sign, logabsdet = np.linalg.slogdet(B)
-    log10absdet = float(logabsdet / np.log(10.0))
-    return smin, cond, log10absdet
+    singular_values = np.linalg.svd(B, compute_uv=False)
+    s_min = float(singular_values[-1]) # smallest singular value
+    cond = float(singular_values[0] / singular_values[-1]) # condition number
 
-def Phi(g_theta_c, m, k):
-    B = compatibility_matrix_B(g_theta_c, m, k)
-    smin, cond, log10absdet = stability_indicators(B)
-    return smin, cond, log10absdet
+    detB = np.linalg.det(B)
+    absolute_val_of_detB = float(abs(detB))
 
-# todo: Need to review this
-def classify_buckling_status(smin, condB,
-                             buckling_tol=1e-6,
-                             candidate_tol=1e-1,
-                             cond_candidate_tol=1e5):
-    if smin < buckling_tol:
-        return "LIKELY BUCKLING"
-    elif smin < candidate_tol and condB > cond_candidate_tol:
-        return "CANDIDATE BUCKLING — refine locally"
-    else:
-        return "NO CLEAR BUCKLING"
+    return absolute_val_of_detB, s_min, cond
 
 
-def scan_growth_with_buckling_flag(
-    g_min, g_max, n, m, k,
-    buckling_tol=1e-6,
-    candidate_tol=1e-1,
-    cond_candidate_tol=1e5
-):
+###############################
+# Scanning g_theta_c function #
+###############################
+def scan_g_theta_c(g_min, g_max, n, m, k, rtol=1e-6, atol=1e-9):
     gs = np.linspace(g_min, g_max, n)
 
-    smins = np.full(n, np.nan)
+    absolute_val_of_detBs = np.full(n, np.nan)
+    s_mins = np.full(n, np.nan)
     conds = np.full(n, np.nan)
-    logdets = np.full(n, np.nan)
-    statuses = np.empty(n, dtype=object)
 
     for i, g in enumerate(gs):
         try:
-            smin, condB, log10det = Phi(float(g), m, k)
-
-            smins[i] = smin
-            conds[i] = condB
-            logdets[i] = log10det
-
-            status = classify_buckling_status(
-                smin=smin,
-                condB=condB,
-                buckling_tol=buckling_tol,
-                candidate_tol=candidate_tol,
-                cond_candidate_tol=cond_candidate_tol
+            B = compatibility_matrix_B(
+                g_theta_c=float(g),
+                m=m,
+                k=k,
+                rtol=rtol,
+                atol=atol
             )
 
-            statuses[i] = status
+            absdet, smin, cond = stability_indicators(B)
+
+            absolute_val_of_detBs[i] = absdet
+            s_mins[i] = smin
+            conds[i] = cond
 
             print(
-                f"g={g:.6f}, "
+                f"g_theta_c={g:.8f}, "
+                f"|det(B)|={absdet:.3e}, "
                 f"smin(B)={smin:.3e}, "
-                f"cond(B)={condB:.3e}, "
-                f"log10|det(B)|={log10det:.2f}, "
-                f"status={status}"
+                f"cond(B)={cond:.3e}"
             )
 
         except Exception as e:
-            statuses[i] = "ERROR"
-            print(f"g={g:.6f}: ERROR: {e}")
+            print(f"g_theta_c={g:.8f}: ERROR: {e}")
 
-    flags = np.array([status == "LIKELY BUCKLING" for status in statuses])
-    candidates = np.array(["CANDIDATE" in str(status) for status in statuses])
+    return gs, absolute_val_of_detBs, s_mins, conds
 
-    return gs, smins, conds, logdets, flags, candidates, statuses
-
-# todo: need to review this
-def plot_buckling_scan(gs, smins, conds, flags, m, k):
+##################################################
+# Plotting det(B) and s_min(B) given a g_theta_c #
+##################################################
+def plot_g_theta_scan(gs, absdets, smins, m, k):
     import matplotlib.pyplot as plt
 
-    finite = np.isfinite(smins)
+    finite_det = np.isfinite(absdets)
+    finite_smin = np.isfinite(smins)
 
     plt.figure()
-    plt.semilogy(gs[finite], smins[finite], marker="o")
+    plt.semilogy(gs[finite_det], absdets[finite_det], marker="o")
+    plt.xlabel(r"$g_{\theta_c}$")
+    plt.ylabel(r"$|\det(B)|$")
+    plt.title(f"Compatibility determinant for mode m={m}, k={k}")
+    plt.grid(True)
+    plt.show()
+
+    plt.figure()
+    plt.semilogy(gs[finite_smin], smins[finite_smin], marker="o")
     plt.xlabel(r"$g_{\theta_c}$")
     plt.ylabel(r"Smallest singular value of $B$")
-    plt.title(f"Buckling indicator for mode m={m}, k={k}")
+    plt.title(f"Near-singularity indicator for mode m={m}, k={k}")
     plt.grid(True)
-
-    if np.any(flags):
-        g_first = gs[np.where(flags)[0][0]]
-        plt.axvline(g_first, linestyle="--", label=f"first flagged g={g_first:.6f}")
-        plt.legend()
-
-    plt.show()
-
-    plt.figure()
-    plt.semilogy(gs[finite], conds[finite], marker="o")
-    plt.xlabel(r"$g_{\theta_c}$")
-    plt.ylabel(r"Condition number of $B$")
-    plt.title(f"Condition number for mode m={m}, k={k}")
-    plt.grid(True)
-
-    if np.any(flags):
-        g_first = gs[np.where(flags)[0][0]]
-        plt.axvline(g_first, linestyle="--", label=f"first flagged g={g_first:.6f}")
-        plt.legend()
-
     plt.show()
 
 
-#########################################
-# Scan utility for g_theta_c thresholds #
-#########################################
-def scan_g_theta_c(g_min, g_max, n, m, k):
-    gs = np.linspace(g_min, g_max, n)
-
-    phis = np.empty(gs.shape, dtype=float)
-    conds = np.empty(gs.shape, dtype=float)
-
-    for i, g in enumerate(gs):
-        try:
-            smin, condS, log10det = Phi(g, m, k)
-            phis[i] = float(smin)
-            conds[i] = float(condS)
-            print(f"g={g:.6f}, smin={smin:.3e}, cond={condS:.3e}, log10|det|={log10det:.2f}")
-        except Exception as e:
-            phis[i] = np.nan
-            conds[i] = np.nan
-            print(f"g={g:.6f}: ERROR: {e}")
-
-    return gs, phis, conds
-
-def find_critical_g_theta_c(
-    g_min, g_max, m, k,
-    n_scan=401,
-    smin_trigger=1e-4,
-    refine_pad=2,
-    xatol=1e-10,
-    maxiter=200,
-    verbose=True
-):
-    """
-    Find the FIRST critical g_theta_c in [g_min, g_max] for fixed (m,k).
-
-    Strategy:
-      1) coarse scan of smin(g)
-      2) find first local minimum with smin < smin_trigger (if none, use global min)
-      3) refine that candidate with bounded minimization on a small interval
-      4) return gcrit and diagnostic info
-
-    Returns:
-      gcrit (float), info (dict)
-    """
-
-    gs = np.linspace(g_min, g_max, n_scan)
-    smins = np.full(gs.shape, np.nan, dtype=float)
-    conds = np.full(gs.shape, np.nan, dtype=float)
-
-    # ---- coarse scan ----
-    for i, g in enumerate(gs):
-        try:
-            smin, condS, _log10det = Phi(float(g), m, k)
-            smins[i] = float(smin)
-            conds[i] = float(condS)
-            if verbose:
-                print(f"[scan] g={g:.6f}, smin={smins[i]:.3e}, cond={conds[i]:.3e}")
-        except Exception as e:
-            if verbose:
-                print(f"[scan] g={g:.6f}: ERROR: {e}")
-
-    if np.all(np.isnan(smins)):
-        raise RuntimeError("All scan values were NaN; base state / IVP failing across [g_min,g_max].")
-
-    # ---- local minima indices ----
-    local_min_idx = []
-    for i in range(1, len(gs) - 1):
-        if np.isfinite(smins[i-1:i+2]).all():
-            if smins[i] <= smins[i-1] and smins[i] <= smins[i+1]:
-                local_min_idx.append(i)
-
-    # ---- pick FIRST local min below trigger ----
-    cand_idx = None
-    for i in local_min_idx:
-        if smins[i] < smin_trigger:
-            cand_idx = i
-            break
-
-    # fallback: global minimum over scan
-    if cand_idx is None:
-        cand_idx = int(np.nanargmin(smins))
-
-    j = cand_idx
-    j0 = max(j - refine_pad, 0)
-    j1 = min(j + refine_pad, len(gs) - 1)
-    a, b = float(gs[j0]), float(gs[j1])
-
-    if verbose:
-        print("\n[refine] scan candidate:")
-        print(f"  g≈{gs[j]:.12f}, smin≈{smins[j]:.3e}, cond≈{conds[j]:.3e}")
-        print(f"  refine interval: [{a:.12f}, {b:.12f}]")
-
-    # ---- bounded refine ----
-    def smin_of_g(g):
-        B = compatibility_matrix_B(float(g), m, k)
-        svals = np.linalg.svd(B, compute_uv=False)
-        return float(svals[-1])
-
-    res = minimize_scalar(
-        smin_of_g,
-        bounds=(a, b),
-        method="bounded",
-        options={"xatol": xatol, "maxiter": maxiter}
-    )
-
-    gcrit = float(res.x)
-
-    # ---- verification at gcrit ----
-    Bcrit = compatibility_matrix_B(gcrit, m, k)
-    U, svals, Vh = np.linalg.svd(Bcrit)
-    v_null = Vh[-1, :].conj().T
-    smin_crit = float(svals[-1])
-    cond_crit = float(svals[0] / svals[-1])
-
-    info = {
-        "gs_scan": gs,
-        "smins_scan": smins,
-        "conds_scan": conds,
-        "scan_candidate_g": float(gs[j]),
-        "scan_candidate_smin": float(smins[j]),
-        "scan_candidate_cond": float(conds[j]),
-        "refine_interval": (a, b),
-        "opt_success": bool(res.success),
-        "opt_message": str(res.message),
-        "opt_fun": float(res.fun),
-        "gcrit": gcrit,
-        "Bcrit": Bcrit,
-        "svals_crit": svals,
-        "smin_crit": smin_crit,
-        "cond_crit": cond_crit,
-        "v_null": v_null,
-        "Bv_norm": float(np.linalg.norm(Bcrit @ v_null)),
-    }
-
-    if verbose:
-        print("\n[result] estimated critical g_theta_c:")
-        print(f"  gcrit = {gcrit:.12f}")
-        print(f"  svals = {svals}")
-        print(f"  smin  = {smin_crit:.3e}")
-        print(f"  cond  = {cond_crit:.3e}")
-        print(f"  ||B v|| = {info['Bv_norm']:.3e}")
-        print(f"  v_null = {v_null}")
-
-    return gcrit, info
-
-
-
-# todo: need to review this
+###############################
+# Running the main simulation #
+###############################
 if __name__ == "__main__":
     m = 14
     k = 0.0
 
-    g_min = 2.460167
-    g_max = 2.460189
-    n = 181
+    g_min = 2.4601
+    g_max = 2.4602
+    n = 101
 
-    buckling_tol = 1e-6
-    candidate_tol = 1e-1
-    cond_candidate_tol = 1e5
-
-    gs, smins, conds, logdets, flags, candidates, statuses = scan_growth_with_buckling_flag(
+    gs, absdets, smins, conds = scan_g_theta_c(
         g_min=g_min,
         g_max=g_max,
         n=n,
         m=m,
-        k=k,
-        buckling_tol=buckling_tol,
-        candidate_tol=candidate_tol,
-        cond_candidate_tol=cond_candidate_tol
+        k=k
     )
 
-    plot_buckling_scan(gs, smins, conds, flags | candidates, m, k)
+    plot_g_theta_scan(gs, absdets, smins, m, k)
 
-    if np.any(flags):
-        idx = np.where(flags)[0][0]
-        print("\nLIKELY BUCKLING DETECTED")
-        print(f"  first flagged g_theta_c = {gs[idx]:.10f}")
-        print(f"  smin(B) = {smins[idx]:.3e}")
-        print(f"  cond(B) = {conds[idx]:.3e}")
+    best_idx = np.nanargmin(smins)
 
-    elif np.any(candidates):
-        idx = np.where(candidates)[0][0]
-        best_idx = np.nanargmin(smins)
-
-        print("\nCANDIDATE BUCKLING DETECTED — refine locally")
-        print(f"  first candidate g_theta_c = {gs[idx]:.10f}")
-        print(f"  best candidate g_theta_c = {gs[best_idx]:.10f}")
-        print(f"  min smin(B) = {smins[best_idx]:.3e}")
-        print(f"  cond(B) = {conds[best_idx]:.3e}")
-        print("\nSuggested refined scan:")
-        print(f"  g_min = {gs[best_idx] - 0.5:.6f}")
-        print(f"  g_max = {gs[best_idx] + 0.5:.6f}")
-        print("  n = 301")
-
-    else:
-        idx = np.nanargmin(smins)
-        print("\nNO CLEAR BUCKLING DETECTED IN THIS RANGE")
-        print("Smallest value found was only the best dip, not necessarily a threshold:")
-        print(f"  best g_theta_c = {gs[idx]:.10f}")
-        print(f"  min smin(B) = {smins[idx]:.3e}")
-        print(f"  cond(B) = {conds[idx]:.3e}")
+    print("\nBest near-buckling candidate in this scan:")
+    print(f"  g_theta_c = {gs[best_idx]:.10f}")
+    print(f"  |det(B)|  = {absdets[best_idx]:.3e}")
+    print(f"  smin(B)  = {smins[best_idx]:.3e}")
+    print(f"  cond(B)  = {conds[best_idx]:.3e}")
 
