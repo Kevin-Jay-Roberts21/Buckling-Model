@@ -435,7 +435,7 @@ def scan_g_theta_c(g_min, g_max, n, m, k, rtol=1e-6, atol=1e-9):
             print(
                 f"g_theta_c={g:.8f}, "
                 f"|det(B)|={absdet:.3e}, "
-                f"smin(B)={smin:.3e}, "
+                f"s_min(B)={smin:.3e}, "
                 f"cond(B)={cond:.3e}"
             )
 
@@ -464,7 +464,7 @@ def plot_g_theta_scan(gs, absdets, smins, m, k):
     plt.figure()
     plt.semilogy(gs[finite_smin], smins[finite_smin], marker="o")
     plt.xlabel(r"$g_{\theta_c}$")
-    plt.ylabel(r"Smallest singular value of $B$")
+    plt.ylabel(r"Smallest singular value of $B$: s_min($B$)")
     plt.title(f"Near-singularity indicator for mode m={m}, k={k}")
     plt.grid(True)
     plt.show()
@@ -477,8 +477,8 @@ if __name__ == "__main__":
     m = 14
     k = 0.0
 
-    g_min = 2.4601
-    g_max = 2.4602
+    g_min = 2.46017
+    g_max = 2.46018
     n = 101
 
     gs, absdets, smins, conds = scan_g_theta_c(
@@ -496,6 +496,6 @@ if __name__ == "__main__":
     print("\nBest near-buckling candidate in this scan:")
     print(f"  g_theta_c = {gs[best_idx]:.10f}")
     print(f"  |det(B)|  = {absdets[best_idx]:.3e}")
-    print(f"  smin(B)  = {smins[best_idx]:.3e}")
+    print(f"  s_min(B)  = {smins[best_idx]:.3e}")
     print(f"  cond(B)  = {conds[best_idx]:.3e}")
 
