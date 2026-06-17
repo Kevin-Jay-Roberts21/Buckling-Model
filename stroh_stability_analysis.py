@@ -487,11 +487,11 @@ def plot_g_theta_scan(gs, absolute_val_of_detBs, relative_s_mins, s_mins, m, k):
 # Running the main simulation #
 ###############################
 if __name__ == "__main__":
-    m = 8
+    m = 20
     k = 0.0
 
-    g_min = 2.26355
-    g_max = 2.26357
+    g_min = 1.9220
+    g_max = 1.9221
     n = 101
 
     gs, absolute_val_of_detBs, relative_s_mins, s_mins, conds = scan_g_theta_c(

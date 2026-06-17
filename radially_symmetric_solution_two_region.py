@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 # Defining the material parameters and geometry #
 #################################################
 R_v = 50 # 1 # void radius (um)
-R_s = 150 # 190 # subcortex radius (um)
+R_s = 190 # 190 # subcortex radius (um)
 R_c = 200 # cortex radius (um)
 
 lambda_c = 0.3 * 10**4 # bulk modulus in cortex region (Pa)
@@ -407,36 +407,36 @@ r_in  = subcortex_solution.sol(np.array([R_v]))[0][0]
 r_s   = r_s_star
 r_out = cortex_solution.sol(np.array([R_c]))[0][0]
 
-plot_reference_vs_deformed_boundaries_two_region(r_in, r_s, r_out)
-
-# r(R)
-plt.figure()
-plt.plot(R_all, r_all)
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"r(R) $(\mu m)$")
-plt.title("Deformed radius mapping")
-plt.grid(True); plt.legend()
-plt.show()
-
-# stresses
-plt.figure()
-plt.plot(R_all, P_RR_all, label=r"$P_{RR}$")
-plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
-plt.title("Stress components")
-plt.xlim(50, 200)        # example: R from 0 to 500 µm
-plt.ylim(-6000, 4500)   # example: stress range
-plt.grid(True); plt.legend()
-plt.show()
-
-# displacement
-u_all = r_all - R_all
-plt.figure()
-plt.plot(R_all, u_all, linewidth=2)
-plt.axhline(0, color="k", linestyle="--", linewidth=1)
-plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"$u(R)=r(R)-R$ $(\mu m)$")
-plt.title("Radial displacement")
-plt.grid(True); plt.legend()
-plt.show()
+# plot_reference_vs_deformed_boundaries_two_region(r_in, r_s, r_out)
+#
+# # r(R)
+# plt.figure()
+# plt.plot(R_all, r_all)
+# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"r(R) $(\mu m)$")
+# plt.title("Deformed radius mapping")
+# plt.grid(True); plt.legend()
+# plt.show()
+#
+# # stresses
+# plt.figure()
+# plt.plot(R_all, P_RR_all, label=r"$P_{RR}$")
+# plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
+# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
+# plt.title("Stress components")
+# plt.xlim(50, 200)        # example: R from 0 to 500 µm
+# plt.ylim(-6000, 4500)   # example: stress range
+# plt.grid(True); plt.legend()
+# plt.show()
+#
+# # displacement
+# u_all = r_all - R_all
+# plt.figure()
+# plt.plot(R_all, u_all, linewidth=2)
+# plt.axhline(0, color="k", linestyle="--", linewidth=1)
+# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"$u(R)=r(R)-R$ $(\mu m)$")
+# plt.title("Radial displacement")
+# plt.grid(True); plt.legend()
+# plt.show()
