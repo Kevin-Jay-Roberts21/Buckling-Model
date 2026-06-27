@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 # Defining the material parameters and geometry #
 #################################################
 R_v = 50 # 1 # void radius (um)
-R_s = 190 # 190 # subcortex radius (um)
+R_s = 180 # 190 # subcortex radius (um)
 R_c = 200 # cortex radius (um)
 
 lambda_c = 0.3 * 10**4 # bulk modulus in cortex region (Pa)
@@ -296,6 +296,163 @@ def solve_base_state():
 
     return subcortex_solution, cortex_solution, r_s_star
 
+def print_base_state_diagnostics(label=""):
+    """
+    Prints base-state quantities to check whether P_f is actually changing
+    the deformation and pressure boundary condition.
+    """
+    sub_sol, cor_sol, r_s_star = solve_base_state()
+
+    r_in, rp_in = sub_sol.sol(np.array([R_v]))
+    r_int_sub, rp_int_sub = sub_sol.sol(np.array([R_s]))
+    r_int_cor, rp_int_cor = cor_sol.sol(np.array([R_s]))
+    r_out, rp_out = cor_sol.sol(np.array([R_c]))
+
+    r_in = float(r_in[0])
+    rp_in = float(rp_in[0])
+
+    r_int_sub = float(r_int_sub[0])
+    rp_int_sub = float(rp_int_sub[0])
+
+    r_int_cor = float(r_int_cor[0])
+    rp_int_cor = float(rp_int_cor[0])
+
+    r_out = float(r_out[0])
+    rp_out = float(rp_out[0])
+
+    P_RR_out, P_TT_out, _ = stresses(
+        np.array([R_c]),
+        np.array([r_out]),
+        np.array([rp_out]),
+        cortex_vals
+    )
+
+    P_RR_int_sub, _, _ = stresses(
+        np.array([R_s]),
+        np.array([r_int_sub]),
+        np.array([rp_int_sub]),
+        subcortex_vals
+    )
+
+    P_RR_int_cor, _, _ = stresses(
+        np.array([R_s]),
+        np.array([r_int_cor]),
+        np.array([rp_int_cor]),
+        cortex_vals
+    )
+
+    expected_outer_P_RR = -P_f * C_z * (r_out / R_c)
+
+    reference_outer_perimeter = 2 * np.pi * R_c
+    base_state_outer_perimeter = 2 * np.pi * r_out
+    base_state_gyrification = base_state_outer_perimeter / reference_outer_perimeter
+
+    print("\n" + "="*70)
+    print(f"BASE STATE DIAGNOSTICS {label}")
+    print("="*70)
+    print(f"P_f = {P_f:.6e}")
+    print(f"g_theta_c = {cortex_vals['g_theta']:.10f}")
+    print(f"R_v, R_s, R_c = {R_v}, {R_s}, {R_c}")
+    print(f"r(R_v) = {r_in:.10f}")
+    print(f"r(R_s-) = {r_int_sub:.10f}")
+    print(f"r(R_s+) = {r_int_cor:.10f}")
+    print(f"r(R_c) = {r_out:.10f}")
+    print(f"u(R_c) = r(R_c)-R_c = {r_out - R_c:.10f}")
+    print(f"r_prime(R_c) = {rp_out:.10f}")
+    print(f"P_RR(R_c) = {float(P_RR_out[0]):.6e}")
+    print(f"Expected P_RR(R_c) from BC = {expected_outer_P_RR:.6e}")
+    print(f"Outer BC residual = {float(P_RR_out[0]) - expected_outer_P_RR:.6e}")
+    print(f"P_RR(R_s-) = {float(P_RR_int_sub[0]):.6e}")
+    print(f"P_RR(R_s+) = {float(P_RR_int_cor[0]):.6e}")
+    print(f"Interface stress jump = {float(P_RR_int_sub[0] - P_RR_int_cor[0]):.6e}")
+    print("="*70 + "\n")
+    print(f"Reference outer perimeter = {reference_outer_perimeter:.10f}")
+    print(f"Base-state outer perimeter = {base_state_outer_perimeter:.10f}")
+    print(f"Base-state perimeter ratio = {base_state_gyrification:.10f}")
+
+def get_base_state_diagnostics():
+    """
+    Return base-state diagnostic quantities as a dictionary.
+    This is the non-printing version used for data collection.
+    """
+    sub_sol, cor_sol, r_s_star = solve_base_state()
+
+    r_in, rp_in = sub_sol.sol(np.array([R_v]))
+    r_int_sub, rp_int_sub = sub_sol.sol(np.array([R_s]))
+    r_int_cor, rp_int_cor = cor_sol.sol(np.array([R_s]))
+    r_out, rp_out = cor_sol.sol(np.array([R_c]))
+
+    r_in = float(r_in[0])
+    rp_in = float(rp_in[0])
+
+    r_int_sub = float(r_int_sub[0])
+    rp_int_sub = float(rp_int_sub[0])
+
+    r_int_cor = float(r_int_cor[0])
+    rp_int_cor = float(rp_int_cor[0])
+
+    r_out = float(r_out[0])
+    rp_out = float(rp_out[0])
+
+    P_RR_out, _, _ = stresses(
+        np.array([R_c]),
+        np.array([r_out]),
+        np.array([rp_out]),
+        cortex_vals
+    )
+
+    P_RR_int_sub, _, _ = stresses(
+        np.array([R_s]),
+        np.array([r_int_sub]),
+        np.array([rp_int_sub]),
+        subcortex_vals
+    )
+
+    P_RR_int_cor, _, _ = stresses(
+        np.array([R_s]),
+        np.array([r_int_cor]),
+        np.array([rp_int_cor]),
+        cortex_vals
+    )
+
+    P_RR_out = float(P_RR_out[0])
+    P_RR_int_sub = float(P_RR_int_sub[0])
+    P_RR_int_cor = float(P_RR_int_cor[0])
+
+    reference_outer_perimeter = 2 * np.pi * R_c
+    base_state_outer_perimeter = 2 * np.pi * r_out
+    base_state_perimeter_ratio = base_state_outer_perimeter / reference_outer_perimeter
+
+    reference_outer_area = np.pi * R_c**2
+    base_state_outer_area = np.pi * r_out**2
+    base_state_area_ratio = base_state_outer_area / reference_outer_area
+
+    return {
+        "P_f": P_f,
+        "R_v": R_v,
+        "R_s": R_s,
+        "R_c": R_c,
+        "R_s_over_R_c": R_s / R_c,
+
+        "r_in": r_in,
+        "r_interface": r_s_star,
+        "r_out": r_out,
+        "u_R_c": r_out - R_c,
+        "r_prime_R_c": rp_out,
+
+        "reference_outer_perimeter": reference_outer_perimeter,
+        "base_state_outer_perimeter": base_state_outer_perimeter,
+        "base_state_perimeter_ratio": base_state_perimeter_ratio,
+
+        "reference_outer_area": reference_outer_area,
+        "base_state_outer_area": base_state_outer_area,
+        "base_state_area_ratio": base_state_area_ratio,
+
+        "P_RR_R_c": P_RR_out,
+        "P_RR_R_s_minus": P_RR_int_sub,
+        "P_RR_R_s_plus": P_RR_int_cor,
+        "interface_stress_jump": P_RR_int_sub - P_RR_int_cor,
+    }
 
 if __name__ == "__main__":
     sub_sol, cor_sol, r_s_star = solve_base_state()
@@ -407,36 +564,36 @@ r_in  = subcortex_solution.sol(np.array([R_v]))[0][0]
 r_s   = r_s_star
 r_out = cortex_solution.sol(np.array([R_c]))[0][0]
 
-# plot_reference_vs_deformed_boundaries_two_region(r_in, r_s, r_out)
-#
-# # r(R)
-# plt.figure()
-# plt.plot(R_all, r_all)
-# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"r(R) $(\mu m)$")
-# plt.title("Deformed radius mapping")
-# plt.grid(True); plt.legend()
-# plt.show()
-#
-# # stresses
-# plt.figure()
-# plt.plot(R_all, P_RR_all, label=r"$P_{RR}$")
-# plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
-# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
-# plt.title("Stress components")
-# plt.xlim(50, 200)        # example: R from 0 to 500 µm
-# plt.ylim(-6000, 4500)   # example: stress range
-# plt.grid(True); plt.legend()
-# plt.show()
-#
-# # displacement
-# u_all = r_all - R_all
-# plt.figure()
-# plt.plot(R_all, u_all, linewidth=2)
-# plt.axhline(0, color="k", linestyle="--", linewidth=1)
-# plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
-# plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"$u(R)=r(R)-R$ $(\mu m)$")
-# plt.title("Radial displacement")
-# plt.grid(True); plt.legend()
-# plt.show()
+plot_reference_vs_deformed_boundaries_two_region(r_in, r_s, r_out)
+
+# r(R)
+plt.figure()
+plt.plot(R_all, r_all)
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"r(R) $(\mu m)$")
+plt.title("Deformed radius mapping")
+plt.grid(True); plt.legend()
+plt.show()
+
+# stresses
+plt.figure()
+plt.plot(R_all, P_RR_all, label=r"$P_{RR}$")
+plt.plot(R_all, P_TT_all, label=r"$P_{\Theta\Theta}$")
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"Piola stress (Pa)")
+plt.title("Stress components")
+plt.xlim(50, 200)        # example: R from 0 to 500 µm
+plt.ylim(-6000, 4500)   # example: stress range
+plt.grid(True); plt.legend()
+plt.show()
+
+# displacement
+u_all = r_all - R_all
+plt.figure()
+plt.plot(R_all, u_all, linewidth=2)
+plt.axhline(0, color="k", linestyle="--", linewidth=1)
+plt.axvline(R_s, linestyle="--", color="k", linewidth=1, label=r"Interface $R_s$")
+plt.xlabel(r"R $(\mu m)$"); plt.ylabel(r"$u(R)=r(R)-R$ $(\mu m)$")
+plt.title("Radial displacement")
+plt.grid(True); plt.legend()
+plt.show()

@@ -5,9 +5,10 @@
 # January 2026
 
 import numpy as np
+import csv
+from datetime import datetime
 from numpy.linalg import det, solve, inv
 from scipy.integrate import solve_ivp
-from scipy.optimize import minimize_scalar
 
 import radially_symmetric_solution_two_region as base
 
@@ -396,58 +397,415 @@ def compatibility_matrix_B(g_theta_c, m, k, rtol=1e-6, atol=1e-9):
 # Stability Indicator Function #
 ################################
 def stability_indicators(B):
+    # -------------------------
+    # Original matrix B
+    # -------------------------
     singular_values = np.linalg.svd(B, compute_uv=False)
-    s_min = float(singular_values[-1]) # smallest singular value
-    s_max = float(singular_values[0]) # largest singular value
-    relative_s_min = float(s_min/s_max)
-    cond = float(singular_values[0] / singular_values[-1]) # condition number
 
-    detB = np.linalg.det(B)
-    absolute_val_of_detB = float(abs(detB))
+    s_min = float(singular_values[-1])
+    s_max = float(singular_values[0])
+    relative_s_min = float(s_min / s_max)
+    cond = float(s_max / s_min)
 
-    return absolute_val_of_detB, s_min, relative_s_min, cond
+    absolute_val_of_detB = float(abs(np.linalg.det(B)))
+
+    # -------------------------
+    # Normalized matrix B
+    # -------------------------
+    row_norms = np.linalg.norm(B, axis=1)
+    col_norms = np.linalg.norm(B, axis=0)
+
+    row_norms[row_norms == 0] = 1.0
+    col_norms[col_norms == 0] = 1.0
+
+    D_row = np.diag(1.0 / row_norms)
+    D_col = np.diag(1.0 / col_norms)
+
+    normalized_B = D_row @ B @ D_col
+
+    normalized_singular_values = np.linalg.svd(normalized_B, compute_uv=False)
+
+    normalized_s_min = float(normalized_singular_values[-1])
+    normalized_s_max = float(normalized_singular_values[0])
+    normalized_relative_s_min = float(normalized_s_min / normalized_s_max)
+    normalized_cond = float(normalized_s_max / normalized_s_min)
+
+    absolute_val_of_det_normalized_B = float(abs(np.linalg.det(normalized_B)))
+
+    return (
+        absolute_val_of_detB,
+        s_min,
+        relative_s_min,
+        cond,
+        absolute_val_of_det_normalized_B,
+        normalized_s_min,
+        normalized_relative_s_min,
+        normalized_cond
+    )
 
 
 ###############################
 # Scanning g_theta_c function #
 ###############################
-def scan_g_theta_c(g_min, g_max, n, m, k, rtol=1e-6, atol=1e-9):
-    gs = np.linspace(g_min, g_max, n)
+def scan_g_theta_c(
+        g_min,
+        g_max,
+        n,
+        m,
+        k,
+        rtol=1e-6,
+        atol=1e-9,
+        threshold=1e-10,
+        max_refinements=10
+):
+    current_g_min = float(g_min)
+    current_g_max = float(g_max)
 
-    absolute_val_of_detBs = np.full(n, np.nan)
-    s_mins = np.full(n, np.nan)
-    relative_s_mins = np.full(n, np.nan)
-    conds = np.full(n, np.nan)
+    best_overall = None
 
-    for i, g in enumerate(gs):
-        try:
-            B = compatibility_matrix_B(
-                g_theta_c=float(g),
-                m=m,
-                k=k,
-                rtol=rtol,
-                atol=atol
+    for refinement in range(max_refinements):
+
+        print("\n" + "="*80)
+        print(f"Mode m={m}, refinement {refinement + 1}/{max_refinements}")
+        print(f"Scanning g_theta_c in [{current_g_min:.10f}, {current_g_max:.10f}]")
+        print("="*80)
+
+        gs = np.linspace(current_g_min, current_g_max, n)
+
+        absolute_val_of_detBs = np.full(n, np.nan)
+        s_mins = np.full(n, np.nan)
+        relative_s_mins = np.full(n, np.nan)
+        conds = np.full(n, np.nan)
+        absolute_val_of_det_normalized_Bs = np.full(n, np.nan)
+        normalized_s_mins = np.full(n, np.nan)
+        normalized_relative_s_mins = np.full(n, np.nan)
+        normalized_conds = np.full(n, np.nan)
+
+        increasing_count = 0
+        min_increase_count = 2
+
+        for i, g in enumerate(gs):
+            try:
+                B = compatibility_matrix_B(
+                    g_theta_c=float(g),
+                    m=m,
+                    k=k,
+                    rtol=rtol,
+                    atol=atol
+                )
+
+                (
+                    absolute_val_of_detB,
+                    s_min,
+                    relative_s_min,
+                    cond,
+                    absolute_val_of_det_normalized_B,
+                    normalized_s_min,
+                    normalized_relative_s_min,
+                    normalized_cond
+                ) = stability_indicators(B)
+
+                absolute_val_of_detBs[i] = absolute_val_of_detB
+                relative_s_mins[i] = relative_s_min
+                s_mins[i] = s_min
+                conds[i] = cond
+                absolute_val_of_det_normalized_Bs[i] = absolute_val_of_det_normalized_B
+                normalized_s_mins[i] = normalized_s_min
+                normalized_relative_s_mins[i] = normalized_relative_s_min
+                normalized_conds[i] = normalized_cond
+
+                print(
+                    f"g_theta_c={g:.10f}, "
+                    f"|det(B)|={absolute_val_of_detB:.3e}, "
+                    f"relative_s_min(B)={relative_s_min:.3e}, "
+                    f"s_min(B)={s_min:.3e}, "
+                    f"cond(B)={cond:.3e}, "
+                    f"normalized_relative_s_min(B)={normalized_relative_s_min:.3e}, "
+                    f"normalized_s_min(B)={normalized_s_min:.3e}"
+                )
+
+                if normalized_relative_s_min <= threshold:
+                    break
+
+                if i >= 2:
+                    previous = relative_s_mins[i - 1]
+                    current = relative_s_mins[i]
+
+                    if np.isfinite(previous) and np.isfinite(current):
+                        if current > previous:
+                            increasing_count += 1
+                        else:
+                            increasing_count = 0
+
+                    if increasing_count >= min_increase_count:
+                        print("\nLocal dip detected. Stopping this refinement early.")
+                        break
+
+            except Exception as e:
+                print(f"g_theta_c={g:.10f}: ERROR: {e}")
+
+        if np.all(~np.isfinite(normalized_relative_s_mins)):
+            print(f"\nNo valid scan points found for mode m={m}.")
+            return (
+                gs,
+                absolute_val_of_detBs,
+                relative_s_mins,
+                s_mins,
+                conds,
+                absolute_val_of_det_normalized_Bs,
+                normalized_s_mins,
+                normalized_relative_s_mins,
+                normalized_conds
             )
 
-            absolute_val_of_detB, s_min, relative_s_min, cond = stability_indicators(B)
+        finite_indices = np.where(np.isfinite(relative_s_mins))[0]
+        best_idx = finite_indices[np.nanargmin(normalized_relative_s_mins[finite_indices])]
 
-            absolute_val_of_detBs[i] = absolute_val_of_detB
-            relative_s_mins[i] = relative_s_min
-            s_mins[i] = s_min
-            conds[i] = cond
+        best_candidate = {
+            "g_theta_c": gs[best_idx],
+            "abs_detB": absolute_val_of_detBs[best_idx],
+            "relative_s_min": relative_s_mins[best_idx],
+            "s_min": s_mins[best_idx],
+            "cond": conds[best_idx],
+            "abs_det_normalized_B": absolute_val_of_det_normalized_Bs[best_idx],
+            "normalized_s_min": normalized_s_mins[best_idx],
+            "normalized_relative_s_min": normalized_relative_s_mins[best_idx],
+            "normalized_cond": normalized_conds[best_idx],
+            "refinement":  refinement + 1,
+        }
 
+        if best_overall is None or best_candidate["normalized_relative_s_min"] < best_overall[
+            "normalized_relative_s_min"]:
+            best_overall = best_candidate
+
+        print("\nBest candidate in this refinement:")
+        print(f"  g_theta_c = {best_candidate['g_theta_c']:.10f}")
+        print(f"  |det(B)|  = {best_candidate['abs_detB']:.3e}")
+        print(f"  relative_s_min(B) = {best_candidate['relative_s_min']:.3e}")
+        print(f"  s_min(B) = {best_candidate['s_min']:.3e}")
+        print(f"  cond(B) = {best_candidate['cond']:.3e}")
+
+        if best_candidate["normalized_relative_s_min"] <= threshold:
+            print("\nBUCKLING FOUND")
+            print(f"  mode m = {m}")
+            print(f"  threshold = {threshold:.1e}")
+            print(f"  g_theta_c = {best_candidate['g_theta_c']:.10f}")
+            print(f"  relative_s_min(B) = {best_candidate['relative_s_min']:.3e}")
+            return (
+                gs,
+                absolute_val_of_detBs,
+                relative_s_mins,
+                s_mins,
+                conds,
+                absolute_val_of_det_normalized_Bs,
+                normalized_s_mins,
+                normalized_relative_s_mins,
+                normalized_conds
+            )
+
+        first_idx = finite_indices[0]
+        last_idx = finite_indices[-1]
+
+        if best_idx == first_idx:
+            print("\nBest candidate is at the lower boundary of this refinement.")
+            print("This suggests g_min may need to be smaller.")
+            print("Stopping this mode scan early.")
+            return (
+                gs,
+                absolute_val_of_detBs,
+                relative_s_mins,
+                s_mins,
+                conds,
+                absolute_val_of_det_normalized_Bs,
+                normalized_s_mins,
+                normalized_relative_s_mins,
+                normalized_conds
+            )
+
+        if best_idx == last_idx:
+            print("\nBest candidate is at the upper boundary of this refinement.")
+            print("This suggests g_max may need to be larger.")
+            print("Stopping this mode scan early.")
+            return (
+                gs,
+                absolute_val_of_detBs,
+                relative_s_mins,
+                s_mins,
+                conds,
+                absolute_val_of_det_normalized_Bs,
+                normalized_s_mins,
+                normalized_relative_s_mins,
+                normalized_conds
+            )
+
+        current_g_min = gs[best_idx - 1]
+        current_g_max = gs[best_idx + 1]
+
+    print("\nNO CLEAR BUCKLING FOUND FOR THIS MODE")
+    print(f"  mode m = {m}")
+    print(f"  threshold = {threshold:.1e}")
+    print("  Best candidate found:")
+    print(f"    g_theta_c = {best_overall['g_theta_c']:.10f}")
+    print(f"    relative_s_min(B) = {best_overall['relative_s_min']:.3e}")
+    print(f"    s_min(B) = {best_overall['s_min']:.3e}")
+    print(f"    cond(B) = {best_overall['cond']:.3e}")
+
+    return (
+        gs,
+        absolute_val_of_detBs,
+        relative_s_mins,
+        s_mins,
+        conds,
+        absolute_val_of_det_normalized_Bs,
+        normalized_s_mins,
+        normalized_relative_s_mins,
+        normalized_conds
+    )
+
+#################################################################
+# Given a mode, see if there's a g_theta_c that causes buckling #
+#################################################################
+def scan_modes_for_buckling(
+        m_min,
+        m_max,
+        g_min,
+        g_max,
+        n,
+        k=0.0,
+        threshold=1e-10,
+        max_refinements=10,
+        rtol=1e-6,
+        atol=1e-9
+):
+    mode_results = []
+
+    for m in range(m_min, m_max + 1):
+
+        print("\n\n" + "#"*90)
+        print(f"STARTING MODE m = {m}")
+        print("#"*90)
+
+        (
+            gs,
+            absolute_val_of_detBs,
+            relative_s_mins,
+            s_mins,
+            conds,
+            absolute_val_of_det_normalized_Bs,
+            normalized_s_mins,
+            normalized_relative_s_mins,
+            normalized_conds
+        ) = scan_g_theta_c(
+            g_min=g_min,
+            g_max=g_max,
+            n=n,
+            m=m,
+            k=k,
+            rtol=rtol,
+            atol=atol,
+            threshold=threshold,
+            max_refinements=max_refinements
+        )
+
+        if np.all(~np.isfinite(normalized_relative_s_mins)):
+            mode_results.append({
+                "m": m,
+                "k": k,
+                "buckled": False,
+                "g_theta_c": np.nan,
+
+                "abs_detB": np.nan,
+                "relative_s_min": np.nan,
+                "s_min": np.nan,
+                "cond": np.nan,
+
+                "abs_det_normalized_B": np.nan,
+                "normalized_s_min": np.nan,
+                "normalized_relative_s_min": np.nan,
+                "normalized_cond": np.nan,
+
+                "note": "no valid points"
+            })
+            continue
+
+        finite_indices = np.where(np.isfinite(normalized_relative_s_mins))[0]
+        best_idx = finite_indices[np.nanargmin(normalized_relative_s_mins[finite_indices])]
+
+        first_idx = finite_indices[0]
+        last_idx = finite_indices[-1]
+
+        if best_idx == first_idx:
+            note = "best at lower boundary"
+        elif best_idx == last_idx:
+            note = "best at upper boundary"
+        else:
+            note = "interior candidate"
+
+        critical_g_theta_c = float(gs[best_idx])
+        buckled = bool(normalized_relative_s_mins[best_idx] <= threshold)
+
+        # Update base state to the critical candidate
+        base.cortex_vals["g_theta"] = critical_g_theta_c
+
+        # Collect radial/base-state diagnostics at this candidate
+        base_data = base.get_base_state_diagnostics()
+
+        result = {
+            "m": m,
+            "k": k,
+            "buckled": buckled,
+            "g_theta_c": critical_g_theta_c,
+
+            # raw B diagnostics
+            "abs_detB": float(absolute_val_of_detBs[best_idx]),
+            "relative_s_min": float(relative_s_mins[best_idx]),
+            "s_min": float(s_mins[best_idx]),
+            "cond": float(conds[best_idx]),
+
+            # normalized B diagnostics
+            "abs_det_normalized_B": float(absolute_val_of_det_normalized_Bs[best_idx]),
+            "normalized_s_min": float(normalized_s_mins[best_idx]),
+            "normalized_relative_s_min": float(normalized_relative_s_mins[best_idx]),
+            "normalized_cond": float(normalized_conds[best_idx]),
+
+            "note": note
+        }
+
+        result.update(base_data)
+
+        mode_results.append(result)
+
+    print("\n\nMODE SCAN SUMMARY")
+    print("="*190)
+    print(
+        "m   buckled   g_theta_c        u(R_c)        perim_ratio    area_ratio     "
+        "P_f          norm_rel_smin   norm_smin      norm_cond      "
+        "raw_rel_smin    raw_smin       raw_cond       note"
+    )
+    print("="*190)
+
+    for r in mode_results:
+        if np.isfinite(r["g_theta_c"]):
             print(
-                f"g_theta_c={g:.8f}, "
-                f"|det(B)|={absolute_val_of_detB:.3e}, "
-                f"relative_s_min(B)={relative_s_min:.3e}, "
-                f"s_min(B)={s_min:.3e}, "
-                f"cond(B)={cond:.3e}"
+                f"{r['m']:2d}  "
+                f"{str(r['buckled']):7s}  "
+                f"{r['g_theta_c']:.10f}  "
+                f"{r['u_R_c']:.6f}  "
+                f"{r['base_state_perimeter_ratio']:.6f}  "
+                f"{r['base_state_area_ratio']:.6f}  "
+                f"{r['P_f']:.3e}  "
+                f"{r['normalized_relative_s_min']:.3e}  "
+                f"{r['normalized_s_min']:.3e}  "
+                f"{r['normalized_cond']:.3e}  "
+                f"{r['relative_s_min']:.3e}  "
+                f"{r['s_min']:.3e}  "
+                f"{r['cond']:.3e}  "
+                f"{r['note']}"
             )
+        else:
+            print(f"{r['m']:2d}  False    NO VALID POINTS")
 
-        except Exception as e:
-            print(f"g_theta_c={g:.8f}: ERROR: {e}")
-
-    return gs, absolute_val_of_detBs, relative_s_mins, s_mins, conds
+    return mode_results
 
 ##################################################
 # Plotting det(B) and s_min(B) given a g_theta_c #
@@ -482,34 +840,46 @@ def plot_g_theta_scan(gs, absolute_val_of_detBs, relative_s_mins, s_mins, m, k):
     plt.grid(True)
     plt.show()
 
+#########################
+# Saving data to a file #
+#########################
+def save_mode_results_to_csv(mode_results, filename=None):
+    if filename is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ratio = base.R_s / base.R_c
+        filename = f"thresholds_Rratio_{ratio:.3f}_Pf_{base.P_f:.0f}_{timestamp}.csv"
+
+    if len(mode_results) == 0:
+        print("No mode results to save.")
+        return
+
+    fieldnames = list(mode_results[0].keys())
+
+    with open(filename, mode="w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(mode_results)
+
+    print(f"\nSaved mode results to: {filename}")
+
+
 
 ###############################
 # Running the main simulation #
 ###############################
 if __name__ == "__main__":
-    m = 20
+
     k = 0.0
 
-    g_min = 1.9220
-    g_max = 1.9221
-    n = 101
-
-    gs, absolute_val_of_detBs, relative_s_mins, s_mins, conds = scan_g_theta_c(
-        g_min=g_min,
-        g_max=g_max,
-        n=n,
-        m=m,
-        k=k
+    mode_results = scan_modes_for_buckling(
+        m_min=1,
+        m_max=30,
+        g_min=1.0,
+        g_max=50.0,
+        n=101,
+        k=k,
+        threshold=1e-10,
+        max_refinements=10
     )
 
-    plot_g_theta_scan(gs, absolute_val_of_detBs, relative_s_mins, s_mins, m, k)
-
-    best_idx = np.nanargmin(s_mins)
-
-    print("\nBest near-buckling candidate in this scan:")
-    print(f"  g_theta_c = {gs[best_idx]:.10f}")
-    print(f"  |det(B)|  = {absolute_val_of_detBs[best_idx]:.3e}")
-    print(f"  relative_s_min(B)  = {relative_s_mins[best_idx]:.3e}")
-    print(f"  s_min(B)  = {s_mins[best_idx]:.3e}")
-    print(f"  cond(B)  = {conds[best_idx]:.3e}")
-
+    save_mode_results_to_csv(mode_results)
